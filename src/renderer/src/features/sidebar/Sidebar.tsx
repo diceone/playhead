@@ -7,6 +7,7 @@ import type {
   LibraryFolder,
   LibraryMode,
   LibraryPlaylist,
+  PlaylistExportFormat,
   SidebarGroupId,
   LibraryTag,
   SelectedSource,
@@ -94,6 +95,7 @@ export function Sidebar({
   onOpenSettings,
   onInstallUpdate,
   onCreatePlaylist,
+  onImportPlaylist,
   onCreateTag,
   onSelectSource,
   onSelectSoundCloudSource,
@@ -102,6 +104,7 @@ export function Sidebar({
   onDropTrackToPlaylist,
   onDropTrackToTag,
   onRemoveFolder,
+  onExportPlaylist,
   onRenamePlaylist,
   onDeletePlaylist,
   onRenameTag,
@@ -129,6 +132,7 @@ export function Sidebar({
   onOpenSettings: () => void;
   onInstallUpdate: () => void;
   onCreatePlaylist: () => void;
+  onImportPlaylist: () => void;
   onCreateTag: () => void;
   onSelectSource: (source: SelectedSource) => void;
   onSelectSoundCloudSource: (collectionId: string) => void;
@@ -137,6 +141,7 @@ export function Sidebar({
   onDropTrackToPlaylist: (trackIds: string[], playlist: LibraryPlaylist) => void;
   onDropTrackToTag: (trackIds: string[], tag: LibraryTag) => void;
   onRemoveFolder: (folder: LibraryFolder) => void;
+  onExportPlaylist: (playlist: LibraryPlaylist, format: PlaylistExportFormat) => void;
   onRenamePlaylist: (playlist: LibraryPlaylist) => void;
   onDeletePlaylist: (playlist: LibraryPlaylist) => void;
   onRenameTag: (tag: LibraryTag) => void;
@@ -266,6 +271,13 @@ export function Sidebar({
         actionLabel="Create playlist"
         actionIcon={icons.plus}
         onAction={onCreatePlaylist}
+        secondaryActions={[
+          {
+            label: "Import playlist",
+            icon: icons.upload,
+            onClick: onImportPlaylist,
+          },
+        ]}
         {...groupDragProps("playlists")}
       >
         {lovedCount === 0 && playlists.length === 0 ? (
@@ -408,6 +420,7 @@ export function Sidebar({
         state={contextMenu}
         onOpenChange={(nextState) => setContextMenu(nextState)}
         onRemoveFolder={onRemoveFolder}
+        onExportPlaylist={onExportPlaylist}
         onRenamePlaylist={onRenamePlaylist}
         onDeletePlaylist={onDeletePlaylist}
         onRenameTag={onRenameTag}

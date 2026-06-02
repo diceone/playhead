@@ -2,11 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MenuItem } from "@/components/ui/menu-item";
 import { useIcons } from "@/lib/icon-context";
-import {
-  clampMenuPoint,
-  shouldOpenSubmenuLeft,
-  type MenuAnchorPoint,
-} from "@/lib/menu-position";
+import { clampMenuPoint, shouldOpenSubmenuLeft, type MenuAnchorPoint } from "@/lib/menu-position";
 import { TrackCell } from "@/features/tracks/TrackCell";
 import type { LibraryAlbum, LibraryArtist } from "./library-model";
 import { ArtistArtwork } from "./ArtistArtwork";
@@ -18,23 +14,29 @@ export function LibraryBrowser({
   artists,
   albums,
   selectedItemIds = [],
+  scrollKey,
+  initialScrollTop = 0,
   playlists,
   onActivateArtist,
   onActivateAlbum,
   onSelectArtist,
   onSelectAlbum,
   onAddTrackIdsToPlaylist,
+  onScrollPositionChange,
 }: {
   emptyLabel: string;
   artists?: LibraryArtist[];
   albums?: LibraryAlbum[];
   selectedItemIds?: string[];
+  scrollKey: string;
+  initialScrollTop?: number;
   playlists: LibraryPlaylist[];
   onActivateArtist?: (artist: LibraryArtist) => void;
   onActivateAlbum?: (album: LibraryAlbum) => void;
   onSelectArtist?: (artist: LibraryArtist, event?: React.MouseEvent<HTMLDivElement>) => void;
   onSelectAlbum?: (album: LibraryAlbum, event?: React.MouseEvent<HTMLDivElement>) => void;
   onAddTrackIdsToPlaylist: (trackIds: string[], playlist: LibraryPlaylist) => void;
+  onScrollPositionChange: (scrollTop: number) => void;
 }) {
   const icons = useIcons();
   const MusicIcon = icons.music;
@@ -45,6 +47,12 @@ export function LibraryBrowser({
     point: MenuAnchorPoint;
     trackIds: string[];
   } | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!scrollContainerRef.current) return;
+    scrollContainerRef.current.scrollTop = initialScrollTop;
+  }, [initialScrollTop, scrollKey]);
 
   const startCollectionDrag = (
     item: LibraryArtist | LibraryAlbum,
@@ -86,7 +94,11 @@ export function LibraryBrowser({
   return (
     <section className="-mb-4 flex min-h-0 flex-1 flex-col gap-[14px]">
       <div className="relative min-h-0 flex-1">
-        <div className="thin-scrollbar no-drag h-full min-h-0 overflow-y-auto pr-2">
+        <div
+          ref={scrollContainerRef}
+          className="thin-scrollbar no-drag h-full min-h-0 overflow-y-auto pr-2"
+          onScroll={(event) => onScrollPositionChange(event.currentTarget.scrollTop)}
+        >
           {rows.length === 0 ? (
             <div className="flex h-full min-h-[180px] items-center justify-center rounded-[28px] border border-white/10 bg-white/[0.025] text-[14px] text-muted-foreground">
               {emptyLabel}

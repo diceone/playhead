@@ -23,6 +23,12 @@ const api: PlayheadApi = {
   getAppVersion: () => ipcRenderer.invoke("app:get-version"),
   getLibraryState: () => ipcRenderer.invoke("library:get-state"),
   saveLibraryState: (state: LibraryState) => ipcRenderer.invoke("library:save-state", state),
+  saveLibrarySessionSettings: (session) =>
+    ipcRenderer.invoke("library:save-session-settings", session),
+  saveLibraryTrackAnalysis: (trackId, bpm) =>
+    ipcRenderer.invoke("library:save-track-analysis", trackId, bpm),
+  saveLibrarySelectedSource: (selectedSource) =>
+    ipcRenderer.invoke("library:save-selected-source", selectedSource),
   selectMusicFolder: (extensions?: string[]) =>
     ipcRenderer.invoke("library:select-folder", extensions),
   scanFolder: (folder: LibraryFolder, extensions?: string[]) =>
@@ -48,6 +54,8 @@ const api: PlayheadApi = {
   clearWaveformCache: () => ipcRenderer.invoke("library:clear-waveform-cache"),
   exportLibraryBackup: (state: LibraryState) => ipcRenderer.invoke("library:export-backup", state),
   importLibraryBackup: () => ipcRenderer.invoke("library:import-backup"),
+  exportPlaylist: (request) => ipcRenderer.invoke("library:export-playlist", request),
+  importPlaylist: () => ipcRenderer.invoke("library:import-playlist"),
   getUpdateState: () => ipcRenderer.invoke("app-updates:get-state"),
   checkForUpdates: () => ipcRenderer.invoke("app-updates:check"),
   installUpdate: () => ipcRenderer.invoke("app-updates:install"),

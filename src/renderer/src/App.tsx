@@ -17,6 +17,8 @@ import {
   type LibraryTag,
   type LibraryTrack,
   type PlaybackSettings,
+  type PlaylistExportFormat,
+  type PlaylistImportTrack,
   type SoundCloudCollection,
   type SoundCloudSettings,
   type SoundCloudState,
@@ -73,6 +75,7 @@ import {
 } from "@/features/audio/audio-analysis";
 import {
   emptyLibraryState,
+  createPlaylist,
   getLibraryCollectionsFromTracks,
   getSourceTracksFromParts,
   getTrackAlbumId,
@@ -86,11 +89,24 @@ import { LibraryBrowser } from "@/features/library/LibraryBrowser";
 import { normalizeSourceForMode } from "@/features/library/source";
 import { usePlayerKeyboardShortcuts } from "@/hooks/use-player-keyboard-shortcuts";
 import { useWindowDrag } from "@/hooks/use-window-drag";
+import type { MenuAnchorPoint } from "@/lib/menu-position";
+import { TrackRowMenu } from "@/features/tracks/TrackRowMenu";
 
 const waveformCachePeakRate = waveformAnalysisPeakRate;
 const waveformCacheMaxPeaks = waveformAnalysisMaxPeaks;
 const sidebarWidth = 260;
+const playlistExportFormatLabels: Record<PlaylistExportFormat, string> = {
+  m3u: "M3U",
+  m3u8: "M3U8",
+  playhead: "Playhead JSON",
+  rekordbox: "rekordbox XML",
+  traktor: "Traktor NML",
+};
 type WaveformPeaks = NonNullable<WaveSurferOptions["peaks"]>;
+
+function HiddenTrackMenuIcon() {
+  return null;
+}
 
 type BatchAnalysisState = {
   status: "idle" | "running" | "complete";
@@ -148,6 +164,54 @@ function getQueueSourceTitle(library: LibraryState): string {
   return "Queue";
 }
 
+function getSourceScrollKey(source: LibraryState["selectedSource"]): string {
+  if (!source) return "none";
+  return `${source.type}:${source.id || ""}`;
+}
+
+function mergeScannedLibraryState(
+  latest: LibraryState,
+  scannedState: LibraryState,
+  scannedFolderIds: Iterable<string>,
+  options: {
+    allowNewFolders?: boolean;
+    selectedSource?: LibraryState["selectedSource"];
+    settings?: LibraryState["settings"];
+  } = {},
+): LibraryState {
+  const scannedIds = new Set(scannedFolderIds);
+  const scannedFoldersById = new Map(
+    scannedState.folders
+      .filter((folder) => scannedIds.has(folder.id))
+      .map((folder) => [folder.id, folder]),
+  );
+  const latestFolderIds = new Set(latest.folders.map((folder) => folder.id));
+  const folders = latest.folders.map((folder) => scannedFoldersById.get(folder.id) || folder);
+
+  if (options.allowNewFolders) {
+    for (const folder of scannedFoldersById.values()) {
+      if (!latestFolderIds.has(folder.id)) folders.push(folder);
+    }
+  }
+
+  const persistedScannedFolderIds = new Set(
+    folders.filter((folder) => scannedIds.has(folder.id)).map((folder) => folder.id),
+  );
+  const tracks = { ...latest.tracks };
+
+  for (const track of Object.values(scannedState.tracks)) {
+    if (persistedScannedFolderIds.has(track.folderId)) tracks[track.id] = track;
+  }
+
+  return {
+    ...latest,
+    folders,
+    tracks,
+    settings: options.settings || latest.settings,
+    selectedSource: options.selectedSource ?? latest.selectedSource,
+  };
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof Error) || !error.message) return fallback;
 
@@ -181,6 +245,91 @@ function toLastfmTrackPayload(
     duration: duration || track.duration || undefined,
     timestamp,
   };
+}
+
+type TrackMatchIndexes = {
+  byPath: Map<string, string>;
+  byFileName: Map<string, string | null>;
+  byMetadata: Map<string, string | null>;
+  byTitleArtist: Map<string, string | null>;
+};
+
+function normalizeTrackMatchText(value: string | undefined): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function normalizeTrackMatchPath(value: string | undefined): string {
+  return normalizeTrackMatchText(value).replace(/\\/g, "/");
+}
+
+function getRoundedDuration(value: number | undefined): string {
+  return Number.isFinite(value) && value && value > 0 ? String(Math.round(value)) : "";
+}
+
+function getTitleArtistKey(track: Pick<LibraryTrack, "artist" | "title"> | PlaylistImportTrack) {
+  const artist = normalizeTrackMatchText(track.artist);
+  const title = normalizeTrackMatchText(track.title);
+  return artist && title ? `${artist}|${title}` : "";
+}
+
+function getMetadataKey(
+  track: Pick<LibraryTrack, "artist" | "duration" | "title"> | PlaylistImportTrack,
+) {
+  const titleArtistKey = getTitleArtistKey(track);
+  const duration = getRoundedDuration(track.duration);
+  return titleArtistKey && duration ? `${titleArtistKey}|${duration}` : "";
+}
+
+function setUniqueTrackMatch(map: Map<string, string | null>, key: string, trackId: string): void {
+  if (!key) return;
+  const existing = map.get(key);
+  map.set(key, existing && existing !== trackId ? null : trackId);
+}
+
+function createTrackMatchIndexes(tracksById: LibraryState["tracks"]): TrackMatchIndexes {
+  const indexes: TrackMatchIndexes = {
+    byPath: new Map(),
+    byFileName: new Map(),
+    byMetadata: new Map(),
+    byTitleArtist: new Map(),
+  };
+
+  for (const track of Object.values(tracksById)) {
+    const pathKey = normalizeTrackMatchPath(track.path);
+    if (pathKey) indexes.byPath.set(pathKey, track.id);
+    setUniqueTrackMatch(indexes.byFileName, normalizeTrackMatchText(track.fileName), track.id);
+    setUniqueTrackMatch(
+      indexes.byFileName,
+      normalizeTrackMatchText(track.path.split(/[\\/]/).pop()),
+      track.id,
+    );
+    setUniqueTrackMatch(indexes.byMetadata, getMetadataKey(track), track.id);
+    setUniqueTrackMatch(indexes.byTitleArtist, getTitleArtistKey(track), track.id);
+  }
+
+  return indexes;
+}
+
+function findImportedTrackId(
+  track: PlaylistImportTrack,
+  indexes: TrackMatchIndexes,
+): string | null {
+  const pathKey = normalizeTrackMatchPath(track.path);
+  if (pathKey) {
+    const pathMatch = indexes.byPath.get(pathKey);
+    if (pathMatch) return pathMatch;
+
+    const fileNameMatch = indexes.byFileName.get(
+      normalizeTrackMatchText(track.path?.split(/[\\/]/).pop()),
+    );
+    if (fileNameMatch) return fileNameMatch;
+  }
+
+  const metadataMatch = indexes.byMetadata.get(getMetadataKey(track));
+  if (metadataMatch) return metadataMatch;
+
+  const titleArtistMatch = indexes.byTitleArtist.get(getTitleArtistKey(track));
+  return titleArtistMatch || null;
 }
 
 function isSoundCloudTrack(track: LibraryTrack): boolean {
@@ -275,6 +424,7 @@ export function App() {
   const libraryRef = useRef<LibraryState>(emptyLibraryState());
   const soundcloudTracksRef = useRef<Record<string, LibraryTrack>>({});
   const soundcloudTrackLoadRequestsRef = useRef<Set<string>>(new Set());
+  const sourceScrollPositionsRef = useRef<Record<string, number>>({});
 
   const [library, setLibrary] = useState<LibraryState>(emptyLibraryState);
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
@@ -305,6 +455,7 @@ export function App() {
   const [playlistPendingDeletion, setPlaylistPendingDeletion] = useState<LibraryPlaylist | null>(
     null,
   );
+  const [playerTrackMenuPoint, setPlayerTrackMenuPoint] = useState<MenuAnchorPoint | null>(null);
   const [tagPendingDeletion, setTagPendingDeletion] = useState<LibraryTag | null>(null);
   const [playlistTrackIdsPendingRemoval, setPlaylistTrackIdsPendingRemoval] = useState<string[]>(
     [],
@@ -393,6 +544,11 @@ export function App() {
         : [],
     [activeTrack, library.tags],
   );
+
+  useEffect(() => {
+    setPlayerTrackMenuPoint(null);
+  }, [activeTrack?.id]);
+
   const selectedLibraryArtist =
     library.selectedSource?.type === "library-artist"
       ? libraryArtists.find((artist) => artist.id === library.selectedSource?.id) || null
@@ -451,24 +607,23 @@ export function App() {
     );
   }, []);
 
-  const persistSessionSettings = useCallback(
-    (nextSession: LibraryState["settings"]["session"]) => {
-      void window.playhead.saveLibraryState({
-        ...library,
-        settings: { ...library.settings, session: nextSession },
-      });
-      setLibrary((current) => ({
+  const persistSessionSettings = useCallback((nextSession: LibraryState["settings"]["session"]) => {
+    setLibrary((current) => {
+      const nextState = {
         ...current,
         settings: { ...current.settings, session: nextSession },
-      }));
-    },
-    [library],
-  );
+      };
+      libraryRef.current = nextState;
+      void window.playhead.saveLibrarySessionSettings(nextSession);
+      return nextState;
+    });
+  }, []);
 
   const saveAnalyzedBpm = useCallback((trackId: string, bpm: number) => {
-    const current = libraryRef.current;
-    const track = current.tracks[trackId];
-    if (track) {
+    setLibrary((current) => {
+      const track = current.tracks[trackId];
+      if (!track) return current;
+
       const nextState: LibraryState = {
         ...current,
         tracks: {
@@ -482,9 +637,9 @@ export function App() {
       };
 
       libraryRef.current = nextState;
-      setLibrary(nextState);
-      void window.playhead.saveLibraryState(nextState);
-    }
+      void window.playhead.saveLibraryTrackAnalysis(trackId, bpm);
+      return nextState;
+    });
 
     const soundCloudTrack = soundcloudTracksRef.current[trackId];
     if (soundCloudTrack) {
@@ -1163,12 +1318,14 @@ export function App() {
         library.settings.library.enabledAudioExtensions,
       );
       if (scannedFolders.length === 0) return;
-      let nextState = library;
+      let nextState = libraryRef.current;
       let lastScannedFolderId: string | null = null;
+      const scannedFolderIds: string[] = [];
 
       for (const scanned of scannedFolders) {
         nextState = mergeScannedFolder(nextState, scanned);
         lastScannedFolderId = scanned.folder.id;
+        scannedFolderIds.push(scanned.folder.id);
         window.playhead.trackEvent("folder_added", {
           source: "picker",
           track_count: scanned.tracks.length,
@@ -1176,16 +1333,18 @@ export function App() {
         showFolderActionToast({ folder: scanned.folder, trackCount: scanned.tracks.length });
       }
 
-      nextState = {
-        ...nextState,
-        selectedSource:
-          library.settings.library.mode === "library"
-            ? { type: "library-tracks" as const }
-            : lastScannedFolderId
-              ? { type: "folder" as const, id: lastScannedFolderId }
-              : nextState.selectedSource,
-      };
-      await persistLibrary(nextState);
+      const latest = libraryRef.current;
+      await persistLibrary(
+        mergeScannedLibraryState(latest, nextState, scannedFolderIds, {
+          allowNewFolders: true,
+          selectedSource:
+            latest.settings.library.mode === "library"
+              ? { type: "library-tracks" as const }
+              : lastScannedFolderId
+                ? { type: "folder" as const, id: lastScannedFolderId }
+                : latest.selectedSource,
+        }),
+      );
     } catch (error) {
       const message = getErrorMessage(error, "Could not scan that folder.");
       setError(message);
@@ -1204,8 +1363,9 @@ export function App() {
       setError("");
 
       try {
-        let nextState = library;
+        let nextState = libraryRef.current;
         let lastScannedFolderId: string | null = null;
+        const scannedFolderIds: string[] = [];
 
         for (const folderPath of uniqueFolderPaths) {
           const scanned = await window.playhead.scanFolderPath(
@@ -1214,6 +1374,7 @@ export function App() {
           );
           nextState = mergeScannedFolder(nextState, scanned);
           lastScannedFolderId = scanned.folder.id;
+          scannedFolderIds.push(scanned.folder.id);
           window.playhead.trackEvent("folder_added", {
             source: "drop",
             track_count: scanned.tracks.length,
@@ -1221,15 +1382,18 @@ export function App() {
           showFolderActionToast({ folder: scanned.folder, trackCount: scanned.tracks.length });
         }
 
-        await persistLibrary({
-          ...nextState,
-          selectedSource:
-            library.settings.library.mode === "library"
-              ? { type: "library-tracks" as const }
-              : lastScannedFolderId
-                ? { type: "folder" as const, id: lastScannedFolderId }
-                : nextState.selectedSource,
-        });
+        const latest = libraryRef.current;
+        await persistLibrary(
+          mergeScannedLibraryState(latest, nextState, scannedFolderIds, {
+            allowNewFolders: true,
+            selectedSource:
+              latest.settings.library.mode === "library"
+                ? { type: "library-tracks" as const }
+                : lastScannedFolderId
+                  ? { type: "folder" as const, id: lastScannedFolderId }
+                  : latest.selectedSource,
+          }),
+        );
       } catch (error) {
         const message = getErrorMessage(error, "Drop folders that contain audio files.");
         setError(message);
@@ -1253,6 +1417,7 @@ export function App() {
 
       try {
         let nextState = state;
+        const scannedFolderIds = state.folders.map((folder) => folder.id);
         for (const folder of state.folders) {
           const scanned = await window.playhead.scanFolder(
             folder,
@@ -1260,7 +1425,12 @@ export function App() {
           );
           nextState = mergeScannedFolder(nextState, scanned);
         }
-        if (activeTrackId && !nextState.tracks[activeTrackId]) {
+        const latest = libraryRef.current;
+        const persistedState = mergeScannedLibraryState(latest, nextState, scannedFolderIds, {
+          selectedSource: state.selectedSource,
+          settings: state.settings,
+        });
+        if (activeTrackId && !persistedState.tracks[activeTrackId]) {
           wavesurferRef.current?.stop();
           wavesurferRef.current?.empty();
           setActiveTrackId(null);
@@ -1271,7 +1441,7 @@ export function App() {
           setShouldAnimateWaveform(false);
         }
 
-        await persistLibrary({ ...nextState, selectedSource: state.selectedSource });
+        await persistLibrary(persistedState);
       } catch (error) {
         setError(getErrorMessage(error, "Could not rescan the library."));
       } finally {
@@ -1772,6 +1942,95 @@ export function App() {
     setRenamingTagId,
   });
 
+  const exportPlaylist = useCallback(
+    async (playlist: LibraryPlaylist, format: PlaylistExportFormat) => {
+      try {
+        const result = await window.playhead.exportPlaylist({
+          playlistId: playlist.id,
+          format,
+        });
+        if (result.canceled) return;
+
+        const skippedDetail =
+          result.skippedTrackCount > 0 ? ` ${result.skippedTrackCount} unavailable skipped.` : "";
+        showSimpleActionToast(
+          `${playlist.name} exported as ${playlistExportFormatLabels[format]}.${skippedDetail}`,
+        );
+        window.playhead.trackEvent("playlist_exported", {
+          format,
+          tracks: result.exportedTrackCount,
+          skipped_tracks: result.skippedTrackCount,
+        });
+      } catch (error) {
+        showSimpleActionToast(getErrorMessage(error, "Failed to export playlist."), "error");
+      }
+    },
+    [],
+  );
+
+  const importPlaylist = useCallback(async () => {
+    try {
+      const result = await window.playhead.importPlaylist();
+      if (result.canceled) return;
+
+      const indexes = createTrackMatchIndexes(allPlayableTracksById);
+      let nextState = library;
+      let importedPlaylistCount = 0;
+      let importedTrackCount = 0;
+      let unmatchedTrackCount = 0;
+
+      for (const importedPlaylist of result.playlists) {
+        const matchedTrackIds: string[] = [];
+        const seenTrackIds = new Set<string>();
+
+        for (const importedTrack of importedPlaylist.tracks) {
+          const trackId = findImportedTrackId(importedTrack, indexes);
+          if (!trackId) {
+            unmatchedTrackCount += 1;
+            continue;
+          }
+          if (seenTrackIds.has(trackId)) continue;
+          seenTrackIds.add(trackId);
+          matchedTrackIds.push(trackId);
+        }
+
+        if (matchedTrackIds.length === 0) continue;
+
+        const playlist = createPlaylist(nextState.playlists, importedPlaylist.name);
+        nextState = {
+          ...nextState,
+          playlists: [...nextState.playlists, { ...playlist, trackIds: matchedTrackIds }],
+          selectedSource: { type: "playlist", id: playlist.id },
+        };
+        importedPlaylistCount += 1;
+        importedTrackCount += matchedTrackIds.length;
+      }
+
+      if (importedPlaylistCount === 0) {
+        const message =
+          unmatchedTrackCount > 0
+            ? "No imported tracks matched your Playhead library."
+            : "No playlists found in that file.";
+        showSimpleActionToast(message, "error");
+        return;
+      }
+
+      await persistLibrary(nextState);
+      const skippedDetail = unmatchedTrackCount > 0 ? ` ${unmatchedTrackCount} unmatched.` : "";
+      showSimpleActionToast(
+        `Imported ${importedPlaylistCount} ${importedPlaylistCount === 1 ? "playlist" : "playlists"} with ${importedTrackCount} ${importedTrackCount === 1 ? "track" : "tracks"}.${skippedDetail}`,
+      );
+      window.playhead.trackEvent("playlist_imported", {
+        format: result.format || "unknown",
+        playlists: importedPlaylistCount,
+        tracks: importedTrackCount,
+        unmatched_tracks: unmatchedTrackCount,
+      });
+    } catch (error) {
+      showSimpleActionToast(getErrorMessage(error, "Failed to import playlist."), "error");
+    }
+  }, [allPlayableTracksById, library, persistLibrary]);
+
   const reorderTrack = useCallback(
     async (trackIds: string[], targetTrackId: string, edge: "before" | "after" = "before") => {
       if (trackIds.includes(targetTrackId)) return;
@@ -1951,9 +2210,14 @@ export function App() {
     (source: LibraryState["selectedSource"]) => {
       setSelectedLibraryBrowserItemIds([]);
       libraryBrowserSelectionAnchorIdRef.current = null;
-      void persistLibrary({ ...library, selectedSource: source });
+      setLibrary((current) => {
+        const nextState = { ...current, selectedSource: source };
+        libraryRef.current = nextState;
+        void window.playhead.saveLibrarySelectedSource(source);
+        return nextState;
+      });
     },
-    [library, persistLibrary],
+    [],
   );
 
   const selectSoundCloudSource = useCallback(
@@ -2314,15 +2578,20 @@ export function App() {
 
   useEffect(() => {
     return window.playhead.onFolderChanged((folderId) => {
-      const folder = library.folders.find((item) => item.id === folderId);
+      const current = libraryRef.current;
+      const folder = current.folders.find((item) => item.id === folderId);
       if (!folder) return;
 
       void window.playhead
-        .scanFolder(folder, library.settings.library.enabledAudioExtensions)
-        .then((scanned) => persistLibrary(mergeScannedFolder(library, scanned)))
+        .scanFolder(folder, current.settings.library.enabledAudioExtensions)
+        .then((scanned) => {
+          const latest = libraryRef.current;
+          const scannedState = mergeScannedFolder(latest, scanned);
+          return persistLibrary(mergeScannedLibraryState(latest, scannedState, [scanned.folder.id]));
+        })
         .catch((error) => setError(getErrorMessage(error, "Could not rescan changed folder.")));
     });
-  }, [library, persistLibrary]);
+  }, [persistLibrary]);
 
   useEffect(() => {
     void window.playhead.getUpdateState().then(setUpdateState);
@@ -2583,6 +2852,7 @@ export function App() {
   }, [isPlaying, playAdjacentTrack, seekBy, togglePlayback]);
 
   const selectedSource = library.selectedSource;
+  const selectedSourceScrollKey = getSourceScrollKey(selectedSource);
   const selectedPlaylist =
     selectedSource?.type === "playlist"
       ? library.playlists.find((playlist) => playlist.id === selectedSource.id) || null
@@ -2591,6 +2861,10 @@ export function App() {
     selectedSource?.type === "tag"
       ? (library.tags || []).find((tag) => tag.id === selectedSource.id) || null
       : null;
+  const activeTrackSelectedPlaylist =
+    activeTrack && selectedPlaylist?.trackIds.includes(activeTrack.id) ? selectedPlaylist : null;
+  const activeTrackSelectedTag =
+    activeTrack && selectedTag?.trackIds.includes(activeTrack.id) ? selectedTag : null;
 
   const hasLovedTracks = (library.favoriteTrackIds || []).some(
     (trackId) => library.tracks[trackId],
@@ -2663,6 +2937,7 @@ export function App() {
                   void window.playhead.installUpdate();
                 }}
                 onCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
+                onImportPlaylist={() => void importPlaylist()}
                 onCreateTag={() => setIsCreateTagOpen(true)}
                 onSelectSource={selectLibrarySource}
                 onSelectSoundCloudSource={(collectionId) =>
@@ -2677,6 +2952,7 @@ export function App() {
                 }
                 onDropTrackToTag={(trackIds, tag) => void addTracksToTag(trackIds, tag)}
                 onRemoveFolder={(folder) => setFolderPendingRemoval(folder)}
+                onExportPlaylist={(playlist, format) => void exportPlaylist(playlist, format)}
                 onRenamePlaylist={(playlist) => setRenamingPlaylistId(playlist.id)}
                 onDeletePlaylist={(playlist) => {
                   if (playlist.trackIds.length === 0) {
@@ -2768,14 +3044,69 @@ export function App() {
                       void toggleFavoriteTrack(activeTrack.id);
                     }
                   }}
+                  onTrackInfoContextMenu={setPlayerTrackMenuPoint}
                   onVolumeChange={setPlayerVolume}
                 />
+
+                {activeTrack && (
+                  <TrackRowMenu
+                    track={activeTrack}
+                    selectedTracks={[activeTrack]}
+                    playlists={library.playlists}
+                    tags={library.tags || []}
+                    selectedPlaylist={activeTrackSelectedPlaylist}
+                    selectedTag={activeTrackSelectedTag}
+                    menuIcon={HiddenTrackMenuIcon}
+                    open={Boolean(playerTrackMenuPoint)}
+                    showTrigger={false}
+                    anchorPoint={playerTrackMenuPoint}
+                    onOpenChange={(open, point) => {
+                      setPlayerTrackMenuPoint(open ? point : null);
+                    }}
+                    onAddToPlaylist={(track, playlist) => addTrackToPlaylist(track.id, playlist)}
+                    onAddTracksToPlaylist={(tracksToAdd, playlist) =>
+                      addTracksToPlaylist(
+                        tracksToAdd.map((track) => track.id),
+                        playlist,
+                      )
+                    }
+                    onCreatePlaylist={(tracksToAdd) => {
+                      setTracksPendingPlaylistCreation(tracksToAdd);
+                      setIsCreatePlaylistOpen(true);
+                    }}
+                    onAddTracksToTag={(tracksToAdd, tag) =>
+                      addTracksToTag(
+                        tracksToAdd.map((track) => track.id),
+                        tag,
+                      )
+                    }
+                    onCreateTag={(tracksToAdd) => {
+                      setTracksPendingTagCreation(tracksToAdd);
+                      setIsCreateTagOpen(true);
+                    }}
+                    onRemoveFromPlaylist={requestRemoveTracksFromSelectedPlaylist}
+                    onRemoveFromTag={removeTracksFromSelectedTag}
+                    onShowInFolder={(track) => window.playhead.showItemInFolder(track.path)}
+                    onShowMetadata={(track) => setMetadataDialog({ track })}
+                    onViewArtist={
+                      library.settings.library.mode === "library" ? viewTrackArtist : undefined
+                    }
+                    onViewAlbum={
+                      library.settings.library.mode === "library" ? viewTrackAlbum : undefined
+                    }
+                    fileActionsEnabled={!isSoundCloudTrack(activeTrack)}
+                  />
+                )}
 
                 {selectedSource?.type === "library-artists" ? (
                   <LibraryBrowser
                     emptyLabel="No artists to show."
                     artists={libraryArtists}
                     selectedItemIds={selectedLibraryBrowserItemIds}
+                    scrollKey={selectedSourceScrollKey}
+                    initialScrollTop={
+                      sourceScrollPositionsRef.current[selectedSourceScrollKey] || 0
+                    }
                     playlists={library.playlists}
                     onSelectArtist={(artist, event) =>
                       selectLibraryBrowserItem(
@@ -2788,12 +3119,19 @@ export function App() {
                       selectLibrarySource({ type: "library-artist", id: artist.id })
                     }
                     onAddTrackIdsToPlaylist={addTracksToPlaylist}
+                    onScrollPositionChange={(scrollTop) => {
+                      sourceScrollPositionsRef.current[selectedSourceScrollKey] = scrollTop;
+                    }}
                   />
                 ) : selectedSource?.type === "library-albums" ? (
                   <LibraryBrowser
                     emptyLabel="No albums to show."
                     albums={libraryAlbums}
                     selectedItemIds={selectedLibraryBrowserItemIds}
+                    scrollKey={selectedSourceScrollKey}
+                    initialScrollTop={
+                      sourceScrollPositionsRef.current[selectedSourceScrollKey] || 0
+                    }
                     playlists={library.playlists}
                     onSelectAlbum={(album, event) =>
                       selectLibraryBrowserItem(
@@ -2806,6 +3144,9 @@ export function App() {
                       selectLibrarySource({ type: "library-album", id: album.id })
                     }
                     onAddTrackIdsToPlaylist={addTracksToPlaylist}
+                    onScrollPositionChange={(scrollTop) => {
+                      sourceScrollPositionsRef.current[selectedSourceScrollKey] = scrollTop;
+                    }}
                   />
                 ) : (
                   <>
@@ -2821,6 +3162,10 @@ export function App() {
                       activeTrackId={activeTrackId}
                       isPlaying={isPlaying}
                       selectedTrackIds={selectedTrackIds}
+                      scrollKey={selectedSourceScrollKey}
+                      initialScrollTop={
+                        sourceScrollPositionsRef.current[selectedSourceScrollKey] || 0
+                      }
                       scrollToTrackId={scrollToTrackId}
                       selectedPlaylist={selectedPlaylist}
                       selectedTag={selectedTag}
@@ -2873,6 +3218,9 @@ export function App() {
                       onReorderTrack={(trackId, targetTrackId, edge) =>
                         reorderTrack(trackId, targetTrackId, edge)
                       }
+                      onScrollPositionChange={(scrollTop) => {
+                        sourceScrollPositionsRef.current[selectedSourceScrollKey] = scrollTop;
+                      }}
                       onScrolledToTrack={() => setScrollToTrackId(null)}
                     />
                   </>

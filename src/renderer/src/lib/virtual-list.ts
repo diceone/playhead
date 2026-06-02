@@ -33,6 +33,15 @@ export function useVirtualList({
     setScrollTop(event.currentTarget.scrollTop);
   }, []);
 
+  const scrollToOffset = useCallback(
+    (offset: number) => {
+      const nextScrollTop = Math.max(0, offset);
+      setScrollTop(nextScrollTop);
+      if (container) container.scrollTop = nextScrollTop;
+    },
+    [container],
+  );
+
   const rows = useMemo<VirtualRow[]>(() => {
     if (itemCount === 0 || viewportHeight === 0) return [];
 
@@ -62,10 +71,12 @@ export function useVirtualList({
 
       if (align === "nearest" && itemTop >= viewTop && itemBottom <= viewBottom) return;
 
-      container.scrollTop = Math.max(
+      const nextScrollTop = Math.max(
         0,
         itemTop - (align === "center" ? (container.clientHeight - itemHeight) / 2 : 0),
       );
+      setScrollTop(nextScrollTop);
+      container.scrollTop = nextScrollTop;
     },
     [container, itemCount, itemHeight],
   );
@@ -75,7 +86,9 @@ export function useVirtualList({
     containerRef: setContainer,
     onScroll,
     rows,
+    scrollTop,
     totalHeight: itemCount * itemHeight,
     scrollToIndex,
+    scrollToOffset,
   };
 }

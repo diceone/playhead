@@ -32,6 +32,8 @@ export function TrackList({
   activeTrackId,
   isPlaying,
   selectedTrackIds,
+  scrollKey,
+  initialScrollTop = 0,
   scrollToTrackId,
   selectedPlaylist,
   selectedTag,
@@ -55,12 +57,15 @@ export function TrackList({
   onViewArtist,
   onViewAlbum,
   onReorderTrack,
+  onScrollPositionChange,
   onScrolledToTrack,
 }: {
   tracks: LibraryTrack[];
   activeTrackId: string | null;
   isPlaying: boolean;
   selectedTrackIds: string[];
+  scrollKey: string;
+  initialScrollTop?: number;
   scrollToTrackId: string | null;
   selectedPlaylist: LibraryPlaylist | null;
   selectedTag: LibraryTag | null;
@@ -84,6 +89,7 @@ export function TrackList({
   onViewArtist?: (track: LibraryTrack) => void;
   onViewAlbum?: (track: LibraryTrack) => void;
   onReorderTrack: (trackIds: string[], targetTrackId: string, edge?: "before" | "after") => void;
+  onScrollPositionChange: (scrollTop: number) => void;
   onScrolledToTrack: () => void;
 }) {
   const icons = useIcons();
@@ -111,15 +117,43 @@ export function TrackList({
     itemCount: tracks.length,
     itemHeight: trackRowHeight,
   });
-  const { container, containerRef, onScroll, rows, scrollToIndex, totalHeight } = virtualList;
+  const {
+    container,
+    containerRef,
+    onScroll: onVirtualScroll,
+    rows,
+    scrollToIndex,
+    scrollToOffset,
+    totalHeight,
+  } = virtualList;
+
+  useEffect(() => {
+    if (!container || scrollToTrackId) return;
+    scrollToOffset(initialScrollTop);
+  }, [container, initialScrollTop, scrollKey, scrollToOffset, scrollToTrackId]);
 
   useEffect(() => {
     if (!scrollToTrackId || !container) return;
 
     const index = tracks.findIndex((track) => track.id === scrollToTrackId);
-    if (index >= 0) scrollToIndex(index, "center");
+    if (index >= 0) {
+      scrollToIndex(index, "center");
+      window.requestAnimationFrame(() => onScrollPositionChange(container.scrollTop));
+    }
     onScrolledToTrack();
-  }, [container, onScrolledToTrack, scrollToIndex, scrollToTrackId, tracks]);
+  }, [
+    container,
+    onScrollPositionChange,
+    onScrolledToTrack,
+    scrollToIndex,
+    scrollToTrackId,
+    tracks,
+  ]);
+
+  const handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    onVirtualScroll(event);
+    onScrollPositionChange(event.currentTarget.scrollTop);
+  };
 
   return (
     <section className="-mb-4 flex min-h-0 flex-1 flex-col gap-[14px]">
@@ -127,15 +161,11 @@ export function TrackList({
         <div
           ref={containerRef}
           className="thin-scrollbar no-drag h-full min-h-0 overflow-y-auto pr-2"
-          onScroll={onScroll}
+          onScroll={handleScroll}
         >
           {tracks.length === 0 ? (
             <div className="flex h-[calc(100%-1rem)] min-h-[180px] items-center justify-center rounded-[28px] border border-white/10 bg-white/[0.025] text-[14px] text-muted-foreground">
-              {isLoading ? (
-                <LoadingTracksText />
-              ) : (
-                "No tracks here yet. Start by adding something."
-              )}
+              {isLoading ? <LoadingTracksText /> : "No tracks here yet. Start by adding something."}
             </div>
           ) : (
             <div className="relative" style={{ height: totalHeight + 32 }}>

@@ -129,7 +129,7 @@ describe("library model", () => {
     ).toBe("artist::unknown album");
   });
 
-  it("merges a scanned folder and removes stale playlist references", () => {
+  it("preserves playlist and tag track ids when rescanning a folder", () => {
     const scanned: ScannedFolder = {
       folder: { id: "folder-1", name: "Music", path: "/music", trackIds: ["track-2"] },
       tracks: [
@@ -146,9 +146,10 @@ describe("library model", () => {
     };
 
     const next = mergeScannedFolder(baseState, scanned);
-    expect(Object.keys(next.tracks)).toEqual(["track-2"]);
-    expect(next.playlists[0].trackIds).toEqual([]);
-    expect(next.tags[0].trackIds).toEqual([]);
+    expect(Object.keys(next.tracks)).toEqual(["track-1", "track-2"]);
+    expect(next.folders[0].trackIds).toEqual(["track-1", "track-2"]);
+    expect(next.playlists[0].trackIds).toEqual(["track-1"]);
+    expect(next.tags[0].trackIds).toEqual(["track-1"]);
     expect(next.selectedSource).toEqual({ type: "folder", id: "folder-1" });
   });
 

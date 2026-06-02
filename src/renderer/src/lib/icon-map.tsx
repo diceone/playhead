@@ -13,6 +13,7 @@ import {
   Clock,
   Copy,
   Dot,
+  Download,
   Globe,
   Heart,
   ImageIcon,
@@ -55,6 +56,7 @@ import {
   Sun,
   Tag,
   Trash2,
+  Upload,
   User,
   Users,
   Volume2,
@@ -79,6 +81,7 @@ export type IconName =
   | "chevrons-down-up"
   | "x"
   | "copy"
+  | "download"
   | "menu"
   | "ellipsis"
   | "dot"
@@ -94,6 +97,7 @@ export type IconName =
   | "settings"
   | "pencil"
   | "trash-2"
+  | "upload"
   | "plus"
   | "arrow-right"
   | "search"
@@ -146,6 +150,7 @@ const lucideMap: Record<IconName, IconComponent> = {
   "chevrons-down-up": ChevronsDownUp,
   x: X,
   copy: Copy,
+  download: Download,
   menu: Menu,
   ellipsis: Ellipsis,
   dot: Dot,
@@ -161,6 +166,7 @@ const lucideMap: Record<IconName, IconComponent> = {
   settings: Settings,
   pencil: Pencil,
   "trash-2": Trash2,
+  upload: Upload,
   plus: Plus,
   "arrow-right": ArrowRight,
   search: Search,

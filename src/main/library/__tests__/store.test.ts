@@ -1,6 +1,57 @@
-import { describe, expect, it } from "vitest";
-import { defaultAppSettings, defaultPlaybackSettings } from "../../../shared/library";
-import { normalizeSettings } from "../store";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  defaultAppSettings,
+  defaultPlaybackSettings,
+  emptyLibraryState,
+  type LibraryState,
+} from "../../../shared/library";
+
+const storeTestState = vi.hoisted(() => ({ userDataDir: "" }));
+
+vi.mock("../../electron", () => ({
+  electron: {
+    app: {
+      getPath: () => storeTestState.userDataDir,
+    },
+  },
+}));
+
+import {
+  normalizeSettings,
+  readLibraryState,
+  writeLibrarySelectedSource,
+  writeLibrarySessionSettings,
+  writeLibraryState,
+  writeLibraryTrackAnalysis,
+} from "../store";
+
+beforeEach(async () => {
+  storeTestState.userDataDir = await mkdtemp(join(tmpdir(), "playhead-store-"));
+});
+
+afterEach(async () => {
+  if (storeTestState.userDataDir) {
+    await rm(storeTestState.userDataDir, { recursive: true, force: true });
+  }
+});
+
+function namedState(name: string): LibraryState {
+  return {
+    ...emptyLibraryState(),
+    playlists: [
+      {
+        id: "playlist-1",
+        name,
+        trackIds: [],
+        createdAt: "",
+        updatedAt: "",
+      },
+    ],
+  };
+}
 
 describe("library store settings", () => {
   it("provides playback defaults", () => {
@@ -93,5 +144,104 @@ describe("library store settings", () => {
       rescanOnLaunch: true,
     });
     expect(settings.playback).toEqual(defaultPlaybackSettings());
+  });
+
+  it("writes library.json atomically and keeps a valid backup", async () => {
+    await writeLibraryState(namedState("Before"));
+    await writeLibraryState(namedState("After"));
+
+    const current = JSON.parse(
+      await readFile(join(storeTestState.userDataDir, "library.json"), "utf8"),
+    ) as LibraryState;
+    const backup = JSON.parse(
+      await readFile(join(storeTestState.userDataDir, "library.json.bak"), "utf8"),
+    ) as LibraryState;
+
+    expect(current.playlists[0].name).toBe("After");
+    expect(backup.playlists[0].name).toBe("Before");
+  });
+
+  it("falls back to the backup when the primary library is unreadable", async () => {
+    await writeLibraryState(namedState("Backup"));
+    await writeLibraryState(namedState("Primary"));
+    await writeFile(join(storeTestState.userDataDir, "library.json"), "{bad json", "utf8");
+
+    const state = await readLibraryState();
+
+    expect(state.playlists[0].name).toBe("Backup");
+  });
+
+  it("merges session saves into the latest library data", async () => {
+    const latest = {
+      ...namedState("Set"),
+      playlists: [
+        {
+          id: "playlist-1",
+          name: "Set",
+          trackIds: ["track-1", "track-2"],
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+    };
+    await writeLibraryState(latest);
+
+    const session = { ...defaultAppSettings().session, activeTrackId: "track-1" };
+    const saved = await writeLibrarySessionSettings(session);
+
+    expect(saved.settings.session.activeTrackId).toBe("track-1");
+    expect(saved.playlists[0].trackIds).toEqual(["track-1", "track-2"]);
+  });
+
+  it("merges analyzed bpm saves into the latest library data", async () => {
+    await writeLibraryState({
+      ...emptyLibraryState(),
+      tracks: {
+        "track-1": {
+          id: "track-1",
+          path: "/music/a.mp3",
+          fileName: "a.mp3",
+          title: "A",
+          artist: "Artist",
+          duration: 1,
+          folderId: "folder-1",
+        },
+      },
+      playlists: [
+        {
+          id: "playlist-1",
+          name: "Set",
+          trackIds: ["track-1", "track-2"],
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+    });
+
+    const saved = await writeLibraryTrackAnalysis("track-1", 128);
+
+    expect(saved.tracks["track-1"].bpm).toBe(128);
+    expect(saved.tracks["track-1"].bpmSource).toBe("analysis");
+    expect(saved.playlists[0].trackIds).toEqual(["track-1", "track-2"]);
+  });
+
+  it("merges selected source saves into the latest library data", async () => {
+    await writeLibraryState({
+      ...namedState("Set"),
+      playlists: [
+        {
+          id: "playlist-1",
+          name: "Set",
+          trackIds: ["track-1"],
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+    });
+
+    const saved = await writeLibrarySelectedSource({ type: "playlist", id: "playlist-1" });
+
+    expect(saved.selectedSource).toEqual({ type: "playlist", id: "playlist-1" });
+    expect(saved.playlists[0].trackIds).toEqual(["track-1"]);
   });
 });

@@ -50,4 +50,16 @@ export const updateMessagesByVersion: Record<string, UpdateMessage> = {
     ),
     buttonLabel: "Got it",
   },
+  "0.2.2": {
+    title: "Playhead has been updated",
+    description: (
+      <ul>
+        <li>Added playlist import and export for common DJ playlist formats</li>
+        <li>Right-clicking the player track info now opens the track menu reliably</li>
+        <li>Library views now remember where you were when switching around the sidebar</li>
+        <li>Improved library rescans so playlist tracks are better protected</li>
+      </ul>
+    ),
+    buttonLabel: "Got it",
+  },
 };

@@ -75,9 +75,7 @@ function sortAlbumTracks(tracks: LibraryTrack[]): LibraryTrack[] {
 }
 
 export function mergeScannedFolder(state: LibraryState, scanned: ScannedFolder): LibraryState {
-  const tracks = Object.fromEntries(
-    Object.entries(state.tracks).filter(([, track]) => track.folderId !== scanned.folder.id),
-  );
+  const tracks = { ...state.tracks };
   for (const track of scanned.tracks) {
     const existing = state.tracks[track.id];
     tracks[track.id] =
@@ -86,27 +84,20 @@ export function mergeScannedFolder(state: LibraryState, scanned: ScannedFolder):
         : { ...track, bpm: existing.bpm, bpmSource: "analysis" };
   }
 
+  const existingFolder = state.folders.find((folder) => folder.id === scanned.folder.id);
+  const folderTrackIds = Array.from(
+    new Set([...(existingFolder?.trackIds || []), ...scanned.folder.trackIds]),
+  ).filter((trackId) => Boolean(tracks[trackId]));
+  const folder = { ...scanned.folder, trackIds: folderTrackIds };
   const folders = [
     ...state.folders.filter((folder) => folder.id !== scanned.folder.id),
-    scanned.folder,
+    folder,
   ];
-
-  const validTrackIds = new Set(Object.keys(tracks));
-  const playlists = state.playlists.map((playlist) => ({
-    ...playlist,
-    trackIds: playlist.trackIds.filter((trackId) => validTrackIds.has(trackId)),
-  }));
-  const tags = (state.tags || []).map((tag) => ({
-    ...tag,
-    trackIds: tag.trackIds.filter((trackId) => validTrackIds.has(trackId)),
-  }));
 
   return {
     ...state,
     folders,
     tracks,
-    playlists,
-    tags,
     selectedSource: { type: "folder", id: scanned.folder.id },
   };
 }

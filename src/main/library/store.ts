@@ -1,5 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   defaultAppSettings,
   defaultLibrarySettings,
@@ -7,17 +7,26 @@ import {
   type AppSettings,
   type LibrarySettings,
   type LibraryState,
+  type SelectedSource,
+  type SessionSettings,
 } from "../../shared/library";
 import { electron } from "../electron";
 import { materializeStoredArtwork } from "../artwork";
 
 const { app } = electron;
+let writeQueue: Promise<void> = Promise.resolve();
 
 function libraryPath(): string {
   return join(app.getPath("userData"), "library.json");
 }
 
+function libraryBackupPath(): string {
+  return `${libraryPath()}.bak`;
+}
+
 export async function readLibraryState(): Promise<LibraryState> {
+  await writeQueue.catch(() => undefined);
+
   try {
     const raw = await readFile(libraryPath(), "utf8");
     const parsed = JSON.parse(raw) as Partial<LibraryState>;
@@ -25,14 +34,97 @@ export async function readLibraryState(): Promise<LibraryState> {
     if (raw.includes('"dataUrl"')) await writeLibraryState(normalized);
     return normalized;
   } catch {
-    return emptyLibraryState();
+    try {
+      const raw = await readFile(libraryBackupPath(), "utf8");
+      return normalizeLibraryState(JSON.parse(raw) as Partial<LibraryState>);
+    } catch {
+      return emptyLibraryState();
+    }
   }
 }
 
 export async function writeLibraryState(state: LibraryState): Promise<LibraryState> {
   const nextState = stripEmbeddedArtwork(state);
-  await writeFile(libraryPath(), `${JSON.stringify(nextState)}\n`, "utf8");
+  const write = writeQueue.then(() => writeLibraryStateFile(nextState));
+  writeQueue = write.catch(() => undefined);
+  await write;
   return nextState;
+}
+
+export async function writeLibrarySessionSettings(
+  session: SessionSettings,
+): Promise<LibraryState> {
+  const current = await readLibraryState();
+  return writeLibraryState({
+    ...current,
+    settings: { ...current.settings, session },
+  });
+}
+
+export async function writeLibraryTrackAnalysis(
+  trackId: string,
+  bpm: number,
+): Promise<LibraryState> {
+  const current = await readLibraryState();
+  const track = current.tracks[trackId];
+  if (!track) return current;
+
+  return writeLibraryState({
+    ...current,
+    tracks: {
+      ...current.tracks,
+      [trackId]: {
+        ...track,
+        bpm,
+        bpmSource: "analysis",
+      },
+    },
+  });
+}
+
+export async function writeLibrarySelectedSource(
+  selectedSource: SelectedSource | null,
+): Promise<LibraryState> {
+  const current = await readLibraryState();
+  return writeLibraryState({ ...current, selectedSource });
+}
+
+async function writeLibraryStateFile(state: LibraryState): Promise<void> {
+  const filePath = libraryPath();
+  const backupPath = libraryBackupPath();
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const content = `${JSON.stringify(state)}\n`;
+
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeBackupIfPrimaryIsValid(filePath, backupPath);
+
+  try {
+    await writeFile(tempPath, content, "utf8");
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function writeBackupIfPrimaryIsValid(filePath: string, backupPath: string): Promise<void> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    JSON.parse(raw);
+    await writeFile(backupPath, raw, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error) || error instanceof SyntaxError) return;
+    throw error;
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT"
+  );
 }
 
 export async function normalizeLibraryState(state: Partial<LibraryState>): Promise<LibraryState> {

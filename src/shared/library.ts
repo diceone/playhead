@@ -118,6 +118,48 @@ export type LibraryPlaylist = {
   updatedAt: string;
 };
 
+export type PlaylistExportFormat = "m3u" | "m3u8" | "playhead" | "rekordbox" | "traktor";
+export type PlaylistImportFormat =
+  | "m3u"
+  | "m3u8"
+  | "playhead"
+  | "rekordbox"
+  | "traktor"
+  | "serato-crate";
+
+export type PlaylistExportRequest = {
+  playlistId: string;
+  format: PlaylistExportFormat;
+};
+
+export type PlaylistExportResult = {
+  canceled: boolean;
+  filePath?: string;
+  exportedTrackCount: number;
+  skippedTrackCount: number;
+};
+
+export type PlaylistImportTrack = {
+  path?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  duration?: number;
+  bpm?: number;
+};
+
+export type PlaylistImportPlaylist = {
+  name: string;
+  tracks: PlaylistImportTrack[];
+};
+
+export type PlaylistImportResult = {
+  canceled: boolean;
+  filePath?: string;
+  format?: PlaylistImportFormat;
+  playlists: PlaylistImportPlaylist[];
+};
+
 export type LibraryTag = {
   id: string;
   name: string;
@@ -296,6 +338,9 @@ export type PlayheadApi = {
   getAppVersion: () => Promise<string>;
   getLibraryState: () => Promise<LibraryState>;
   saveLibraryState: (state: LibraryState) => Promise<LibraryState>;
+  saveLibrarySessionSettings: (session: SessionSettings) => Promise<LibraryState>;
+  saveLibraryTrackAnalysis: (trackId: string, bpm: number) => Promise<LibraryState>;
+  saveLibrarySelectedSource: (selectedSource: SelectedSource | null) => Promise<LibraryState>;
   selectMusicFolder: (extensions?: string[]) => Promise<ScannedFolder[]>;
   scanFolder: (folder: LibraryFolder, extensions?: string[]) => Promise<ScannedFolder>;
   scanFolderPath: (path: string, extensions?: string[]) => Promise<ScannedFolder>;
@@ -318,6 +363,8 @@ export type PlayheadApi = {
   clearWaveformCache: () => Promise<void>;
   exportLibraryBackup: (state: LibraryState) => Promise<boolean>;
   importLibraryBackup: () => Promise<LibraryState | null>;
+  exportPlaylist: (request: PlaylistExportRequest) => Promise<PlaylistExportResult>;
+  importPlaylist: () => Promise<PlaylistImportResult>;
   getUpdateState: () => Promise<AppUpdateState>;
   checkForUpdates: () => Promise<AppUpdateState>;
   installUpdate: () => Promise<boolean>;

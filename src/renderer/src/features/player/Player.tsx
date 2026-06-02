@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { SliderComfortable } from "@/components/ui/slider";
 import { formatTime } from "@/lib/format";
 import { useIcons } from "@/lib/icon-context";
+import type { MenuAnchorPoint } from "@/lib/menu-position";
 import { useWindowDrag } from "@/hooks/use-window-drag";
 import { FavoriteHeartButton } from "@/features/tracks/FavoriteHeartButton";
 import { TrackArtwork } from "@/features/tracks/TrackArtwork";
@@ -51,6 +52,7 @@ export function Player({
   onToggleShuffle,
   onCycleRepeat,
   onToggleFavorite,
+  onTrackInfoContextMenu,
   onVolumeChange,
 }: {
   activeTrack: LibraryTrack | null;
@@ -73,6 +75,7 @@ export function Player({
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
   onToggleFavorite: () => void;
+  onTrackInfoContextMenu: (point: MenuAnchorPoint) => void;
   onVolumeChange: (volume: number) => void;
 }) {
   const windowDragHandlers = useWindowDrag<HTMLDivElement>();
@@ -94,35 +97,43 @@ export function Player({
   return (
     <section className="relative flex shrink-0 flex-col gap-[10px] px-4 pt-4">
       <div className="app-drag flex h-16 items-center gap-3" {...windowDragHandlers}>
-        <div className="relative size-16 shrink-0 rounded-[12px]">
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.div
-              key={activeTrack?.id || "empty-artwork"}
-              className="absolute inset-0"
-              initial={{ opacity: 0, scale: 0.92, y: 6, filter: "blur(8px)" }}
-              animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
-              exit={{ opacity: 0, scale: 0.96, y: -4, filter: "blur(8px)" }}
-              transition={{
-                type: "spring",
-                stiffness: 520,
-                damping: 36,
-                mass: 0.72,
-                opacity: { duration: 0.16 },
-                filter: { duration: 0.22 },
-              }}
-            >
-              {activeTrack ? (
-                <TrackArtwork track={activeTrack} fallbackIcon={MusicIcon} size="lg" />
-              ) : (
-                <div className="grid size-16 place-items-center rounded-[12px] bg-white/10 text-muted-foreground">
-                  <MusicIcon size={24} strokeWidth={1.6} />
-                </div>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </div>
+        <div
+          className="no-drag flex min-w-0 flex-1 items-center gap-3"
+          onContextMenu={(event) => {
+            if (!activeTrack) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onTrackInfoContextMenu({ x: event.clientX, y: event.clientY, align: "left" });
+          }}
+        >
+          <div className="relative size-16 shrink-0 rounded-[12px]">
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.div
+                key={activeTrack?.id || "empty-artwork"}
+                className="absolute inset-0"
+                initial={{ opacity: 0, scale: 0.92, y: 6, filter: "blur(8px)" }}
+                animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
+                exit={{ opacity: 0, scale: 0.96, y: -4, filter: "blur(8px)" }}
+                transition={{
+                  type: "spring",
+                  stiffness: 520,
+                  damping: 36,
+                  mass: 0.72,
+                  opacity: { duration: 0.16 },
+                  filter: { duration: 0.22 },
+                }}
+              >
+                {activeTrack ? (
+                  <TrackArtwork track={activeTrack} fallbackIcon={MusicIcon} size="lg" />
+                ) : (
+                  <div className="grid size-16 place-items-center rounded-[12px] bg-white/10 text-muted-foreground">
+                    <MusicIcon size={24} strokeWidth={1.6} />
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
 
-        <div className="flex min-w-0 flex-1 items-center gap-3">
           <div className="min-w-0 flex-1">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
@@ -177,15 +188,15 @@ export function Player({
               </motion.div>
             </AnimatePresence>
           </div>
+        </div>
 
-          <div className="no-drag flex shrink-0 items-center gap-4 text-[13px] font-medium tabular-nums text-muted-foreground">
-            <FavoriteHeartButton
-              active={isFavorite}
-              disabled={!activeTrack}
-              tooltipSide="left"
-              onClick={onToggleFavorite}
-            />
-          </div>
+        <div className="no-drag flex shrink-0 items-center gap-4 text-[13px] font-medium tabular-nums text-muted-foreground">
+          <FavoriteHeartButton
+            active={isFavorite}
+            disabled={!activeTrack}
+            tooltipSide="left"
+            onClick={onToggleFavorite}
+          />
         </div>
       </div>
 
