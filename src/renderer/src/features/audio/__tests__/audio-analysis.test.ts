@@ -54,10 +54,10 @@ describe("volume normalization", () => {
     expect(loudnessDb!).toBeCloseTo(-20.691, 2);
   });
 
-  it("targets -14 dB while clamping extreme gain changes", () => {
-    expect(getLoudnessNormalizationGain(-20)).toBeCloseTo(10 ** (6 / 20), 5);
-    expect(getLoudnessNormalizationGain(-8)).toBeCloseTo(10 ** (-6 / 20), 5);
-    expect(getLoudnessNormalizationGain(-40)).toBeCloseTo(10 ** (6 / 20), 5);
+  it("attenuates toward -18 dB without boosting quiet tracks", () => {
+    expect(getLoudnessNormalizationGain(-20)).toBe(1);
+    expect(getLoudnessNormalizationGain(-8)).toBeCloseTo(10 ** (-10 / 20), 5);
+    expect(getLoudnessNormalizationGain(-40)).toBe(1);
     expect(getLoudnessNormalizationGain(4)).toBeCloseTo(10 ** (-12 / 20), 5);
   });
 
