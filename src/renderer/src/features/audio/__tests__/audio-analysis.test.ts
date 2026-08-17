@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWaveformCachePeaks,
+  estimateIntegratedLoudnessDb,
+  getLoudnessNormalizationGain,
   getWaveformAnalysisPeakCount,
   shouldAnalyzeTrackBpm,
 } from "../audio-analysis";
@@ -41,6 +43,26 @@ describe("shouldAnalyzeTrackBpm", () => {
 
   it("allows analyzed bpm to be revalidated from cache", () => {
     expect(shouldAnalyzeTrackBpm(createTrack({ bpm: 128, bpmSource: "analysis" }))).toBe(true);
+  });
+});
+
+describe("volume normalization", () => {
+  it("estimates steady-state loudness from decoded audio", () => {
+    const samples = Array.from({ length: 16000 }, () => 0.1);
+    const loudnessDb = estimateIntegratedLoudnessDb(createBuffer(samples, 16000));
+    expect(loudnessDb).not.toBeNull();
+    expect(loudnessDb!).toBeCloseTo(-20.691, 2);
+  });
+
+  it("targets -14 dB while clamping extreme gain changes", () => {
+    expect(getLoudnessNormalizationGain(-20)).toBeCloseTo(10 ** (6 / 20), 5);
+    expect(getLoudnessNormalizationGain(-8)).toBeCloseTo(10 ** (-6 / 20), 5);
+    expect(getLoudnessNormalizationGain(-40)).toBeCloseTo(10 ** (6 / 20), 5);
+    expect(getLoudnessNormalizationGain(4)).toBeCloseTo(10 ** (-12 / 20), 5);
+  });
+
+  it("ignores silence", () => {
+    expect(estimateIntegratedLoudnessDb(createBuffer([0, 0, 0], 3))).toBeNull();
   });
 });
 
