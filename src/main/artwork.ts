@@ -36,7 +36,7 @@ function artworkPathFromUrl(src: string): string {
 
 async function writeArtworkFile(key: string, bytes: Uint8Array): Promise<LibraryArtwork> {
   const image = nativeImage.createFromBuffer(Buffer.from(bytes));
-  const normalized = image.isEmpty() ? Buffer.from(bytes) : image.resize({ width: 512 }).toPNG();
+  const normalized = image.isEmpty() ? Buffer.from(bytes) : image.resize({ width: 256 }).toPNG();
   const artworkDirectory = getArtworkDirectory();
   const artworkPath = getArtworkPath(key);
 

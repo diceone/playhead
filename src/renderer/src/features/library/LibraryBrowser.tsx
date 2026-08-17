@@ -170,6 +170,8 @@ export function LibraryBrowser({
                             src={artworkSrc}
                             alt=""
                             draggable={false}
+                            loading="lazy"
+                            decoding="async"
                           />
                         ) : (
                           <MusicIcon size={18} strokeWidth={1.8} />

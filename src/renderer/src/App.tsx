@@ -520,16 +520,23 @@ export function App() {
     library.tracks,
     soundcloudTracksByCollection,
   ]);
+  const hasSoundcloudTracks = useMemo(
+    () => Object.keys(soundcloudTracksByCollection).length > 0,
+    [soundcloudTracksByCollection],
+  );
   const allPlayableTracksById = useMemo(
-    () => ({
-      ...library.tracks,
-      ...Object.fromEntries(
-        Object.values(soundcloudTracksByCollection)
-          .flat()
-          .map((track) => [track.id, track]),
-      ),
-    }),
-    [library.tracks, soundcloudTracksByCollection],
+    () => {
+      if (!hasSoundcloudTracks) return library.tracks;
+      return {
+        ...library.tracks,
+        ...Object.fromEntries(
+          Object.values(soundcloudTracksByCollection)
+            .flat()
+            .map((track) => [track.id, track]),
+        ),
+      };
+    },
+    [library.tracks, soundcloudTracksByCollection, hasSoundcloudTracks],
   );
   const libraryTrackCount = useMemo(() => Object.keys(library.tracks).length, [library.tracks]);
   const activeTrack = activeTrackId ? allPlayableTracksById[activeTrackId] : null;

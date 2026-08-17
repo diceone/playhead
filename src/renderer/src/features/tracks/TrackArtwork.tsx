@@ -31,6 +31,8 @@ export function TrackArtwork({
           src={artworkSrc}
           alt=""
           draggable={false}
+          loading="lazy"
+          decoding="async"
         />
       ) : (
         <FallbackIcon size={iconSize} strokeWidth={1.6} />

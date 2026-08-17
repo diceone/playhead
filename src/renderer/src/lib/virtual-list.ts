@@ -8,7 +8,7 @@ export type VirtualRow = {
 export function useVirtualList({
   itemCount,
   itemHeight,
-  overscan = 8,
+  overscan = 4,
 }: {
   itemCount: number;
   itemHeight: number;
