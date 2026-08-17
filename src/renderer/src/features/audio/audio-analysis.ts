@@ -3,13 +3,13 @@ import type { LibraryTrack } from "../../../../shared/library";
 
 export const waveformAnalysisPeakRate = 20;
 export const waveformAnalysisMaxPeaks = 24_000;
-export const volumeNormalizationTargetLoudnessDb = -14;
+export const volumeNormalizationTargetLoudnessDb = -18;
 
 const loudnessAbsoluteGateDb = -70;
 const loudnessOffsetDb = -0.691;
 const loudnessRelativeGateDb = 10;
 const volumeNormalizationMinGainDb = -12;
-const volumeNormalizationMaxGainDb = 6;
+const volumeNormalizationMaxGainDb = 0;
 
 export function shouldAnalyzeTrackBpm(track: LibraryTrack): boolean {
   if (!track.bpm) return true;
