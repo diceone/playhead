@@ -18,12 +18,22 @@ type CachedNormalization = {
 
 type NormalizationCache = Record<string, CachedNormalization>;
 
+type AudioGraph = {
+  context: AudioContext;
+  gain: GainNode;
+  limiter: DynamicsCompressorNode;
+};
+
 type VolumeNormalizationRuntime = {
   patched: boolean;
   activeWaveSurfer: WaveSurfer | null;
   baseVolume: number;
   gain: number;
-  setRawVolume: ((waveSurfer: WaveSurfer, volume: number) => void) | null;
+  useWebAudioGain: boolean;
+  rawSetVolume: ((waveSurfer: WaveSurfer, volume: number) => void) | null;
+  graphs: WeakMap<HTMLMediaElement, AudioGraph>;
+  activeTrack: LibraryTrack | null;
+  requestId: number;
 };
 
 const globalScope = globalThis as typeof globalThis & {
@@ -36,33 +46,96 @@ const runtime =
     activeWaveSurfer: null,
     baseVolume: 1,
     gain: 1,
-    setRawVolume: null,
+    useWebAudioGain: false,
+    rawSetVolume: null,
+    graphs: new WeakMap<HTMLMediaElement, AudioGraph>(),
+    activeTrack: null,
+    requestId: 0,
   });
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function getEffectiveVolume(baseVolume: number, gain: number): number {
-  return clamp(baseVolume * gain, 0, 1);
+function getFallbackVolume(baseVolume: number, gain: number): number {
+  return clamp(baseVolume * Math.min(gain, 1), 0, 1);
+}
+
+function configureLimiter(limiter: DynamicsCompressorNode): void {
+  limiter.threshold.value = -1;
+  limiter.knee.value = 0;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.1;
+}
+
+function ensureAudioGraph(waveSurfer: WaveSurfer): AudioGraph | null {
+  const media = waveSurfer.getMediaElement();
+  const existing = runtime.graphs.get(media);
+  if (existing) return existing;
+
+  try {
+    const context = new AudioContext();
+    const source = context.createMediaElementSource(media);
+    const gain = context.createGain();
+    const limiter = context.createDynamicsCompressor();
+    configureLimiter(limiter);
+    source.connect(gain).connect(limiter).connect(context.destination);
+    const graph = { context, gain, limiter };
+    runtime.graphs.set(media, graph);
+    return graph;
+  } catch (error) {
+    console.warn("Could not initialize Web Audio volume normalization", error);
+    return null;
+  }
+}
+
+function applyRuntimeGain(): void {
+  const waveSurfer = runtime.activeWaveSurfer;
+  if (!waveSurfer || !runtime.rawSetVolume) return;
+
+  if (runtime.useWebAudioGain) {
+    const graph = ensureAudioGraph(waveSurfer);
+    if (graph) {
+      runtime.rawSetVolume(waveSurfer, runtime.baseVolume);
+      graph.gain.gain.setTargetAtTime(runtime.gain, graph.context.currentTime, 0.015);
+      if (graph.context.state === "suspended") void graph.context.resume().catch(() => undefined);
+      return;
+    }
+  }
+
+  runtime.rawSetVolume(waveSurfer, getFallbackVolume(runtime.baseVolume, runtime.gain));
 }
 
 if (!runtime.patched) {
+  const rawCreate = WaveSurfer.create.bind(WaveSurfer);
   const rawSetVolume = WaveSurfer.prototype.setVolume;
   const rawDestroy = WaveSurfer.prototype.destroy;
 
-  runtime.setRawVolume = (waveSurfer, volume) => rawSetVolume.call(waveSurfer, volume);
+  runtime.rawSetVolume = (waveSurfer, volume) => rawSetVolume.call(waveSurfer, volume);
+
+  WaveSurfer.create = ((options: Parameters<typeof WaveSurfer.create>[0]) => {
+    const waveSurfer = rawCreate(options);
+    runtime.activeWaveSurfer = waveSurfer;
+    runtime.baseVolume = 1;
+    runtime.gain = 1;
+    runtime.useWebAudioGain = false;
+    return waveSurfer;
+  }) as typeof WaveSurfer.create;
 
   WaveSurfer.prototype.setVolume = function setVolumeWithNormalization(volume: number) {
     runtime.activeWaveSurfer = this;
     runtime.baseVolume = clamp(volume, 0, 1);
-    runtime.setRawVolume?.(this, getEffectiveVolume(runtime.baseVolume, runtime.gain));
+    applyRuntimeGain();
   };
 
   WaveSurfer.prototype.destroy = function destroyWithNormalizationCleanup() {
     if (runtime.activeWaveSurfer === this) {
       runtime.activeWaveSurfer = null;
+      runtime.activeTrack = null;
       runtime.baseVolume = 1;
+      runtime.gain = 1;
+      runtime.useWebAudioGain = false;
     }
     return rawDestroy.call(this);
   };
@@ -144,17 +217,10 @@ async function decodeTrackForNormalization(track: LibraryTrack): Promise<AudioBu
   return decodeAudioTrack(track, window.playhead.readAudioFile);
 }
 
-export function setPlaybackNormalizationGain(gain: number): void {
+function setPlaybackNormalizationGain(gain: number, allowBoost: boolean): void {
   runtime.gain = Number.isFinite(gain) ? clamp(gain, 0.25, 2) : 1;
-
-  const waveSurfer = runtime.activeWaveSurfer;
-  if (!waveSurfer || !runtime.setRawVolume) return;
-
-  try {
-    runtime.setRawVolume(waveSurfer, getEffectiveVolume(runtime.baseVolume, runtime.gain));
-  } catch {
-    // The WaveSurfer instance may already be tearing down.
-  }
+  runtime.useWebAudioGain = allowBoost;
+  applyRuntimeGain();
 }
 
 export function getCachedTrackNormalizationGain(track: LibraryTrack): number | null {
@@ -191,4 +257,38 @@ export function analyzeTrackNormalizationGain(track: LibraryTrack): Promise<numb
 
   analysisPromises.set(cacheKey, analysis);
   return analysis;
+}
+
+export async function applyTrackVolumeNormalization(track: LibraryTrack | null): Promise<void> {
+  const requestId = runtime.requestId + 1;
+  runtime.requestId = requestId;
+  runtime.activeTrack = track;
+
+  if (!track) {
+    setPlaybackNormalizationGain(1, false);
+    return;
+  }
+
+  let enabled = false;
+  try {
+    const library = await window.playhead.getLibraryState();
+    enabled = library.settings.playback.normalizeVolume;
+  } catch (error) {
+    console.warn("Could not read volume normalization setting", error);
+  }
+
+  if (requestId !== runtime.requestId || runtime.activeTrack?.id !== track.id) return;
+  if (!enabled) {
+    setPlaybackNormalizationGain(1, false);
+    return;
+  }
+
+  const allowBoost = track.source !== "soundcloud" && !track.soundcloud;
+  const cachedGain = getCachedTrackNormalizationGain(track);
+  if (cachedGain !== null) setPlaybackNormalizationGain(cachedGain, allowBoost);
+  else setPlaybackNormalizationGain(1, allowBoost);
+
+  const gain = await analyzeTrackNormalizationGain(track);
+  if (requestId !== runtime.requestId || runtime.activeTrack?.id !== track.id) return;
+  setPlaybackNormalizationGain(gain, allowBoost);
 }
