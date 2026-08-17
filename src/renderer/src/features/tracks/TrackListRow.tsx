@@ -129,6 +129,14 @@ export function TrackListRow({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-4 text-[13px] font-medium tabular-nums text-muted-foreground">
+        {track.genre && (
+          <span className="hidden max-w-[120px] truncate text-[12px] font-normal sm:inline">
+            {track.genre}
+          </span>
+        )}
+        {track.bpm != null && track.bpm > 0 && (
+          <span className="hidden text-[12px] font-normal sm:inline">{Math.round(track.bpm)} BPM</span>
+        )}
         <span>{formatTime(track.duration)}</span>
         <FavoriteHeartButton
           active={favorite}

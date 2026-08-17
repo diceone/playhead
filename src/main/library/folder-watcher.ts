@@ -62,11 +62,18 @@ export async function watchLibraryFolders(
       },
       ignoreInitial: true,
       ignored: (filePath, stats) => {
-        if (stats?.isDirectory() && ignoredDirectoryNames.has(filePath.split(/[\\/]/).pop() || "")) {
+        const fileName = filePath.split(/[\\/]/).pop() || "";
+        if (stats?.isDirectory() && ignoredDirectoryNames.has(fileName)) {
           return true;
         }
 
-        return Boolean(stats?.isFile()) && !watchedExtensions.has(extname(filePath).toLowerCase());
+        if (stats?.isFile()) {
+          // Skip hidden files, dotfiles, and macOS Apple Double resource-fork files (._*)
+          if (fileName.startsWith(".") || fileName.startsWith("._")) return true;
+          return !watchedExtensions.has(extname(filePath).toLowerCase());
+        }
+
+        return false;
       },
     },
   );

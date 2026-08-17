@@ -54,6 +54,9 @@ const blockedFileNames = new Set([
   "requirements.txt",
   "yarn.lock",
 ]);
+/** Files whose name starts with one of these prefixes are skipped. */
+const ignoredFilePrefixes = [".", "._"];
+
 const maxVisitedDirectories = 5_000;
 const maxVisitedEntries = 75_000;
 const metadataParseConcurrency = 4;
@@ -117,6 +120,11 @@ async function findAudioFiles(folderPath: string, extensions = audioExtensions):
         );
       }
 
+      // Skip hidden files, dotfiles, and macOS Apple Double resource-fork files (._*)
+      if (entry.isFile() && ignoredFilePrefixes.some((prefix) => entry.name.startsWith(prefix))) {
+        continue;
+      }
+
       if (entry.isFile() && extensions.has(extname(entry.name).toLowerCase())) {
         audioFiles.push(entryPath);
       }
@@ -167,6 +175,7 @@ export async function buildTrack(
     });
 
     const bpm = metadata.common.bpm;
+    const genre = metadata.common.genre;
     const artwork =
       storedArtwork ||
       (options.artworkCache
@@ -184,6 +193,7 @@ export async function buildTrack(
       trackNumber: metadata.common.track.no || undefined,
       diskNumber: metadata.common.disk.no || undefined,
       year: metadata.common.year,
+      genre: genre && genre.length > 0 ? genre.join(" / ") : undefined,
       artwork,
       duration: metadata.format.duration || 0,
       audioFormat: metadata.format.container || extname(filePath).slice(1).toUpperCase(),

@@ -52,6 +52,7 @@ export type LibraryTrack = {
   trackNumber?: number;
   diskNumber?: number;
   year?: number;
+  genre?: string;
   artwork?: LibraryArtwork;
   duration: number;
   audioFormat?: string;
