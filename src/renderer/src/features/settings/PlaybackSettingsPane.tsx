@@ -44,6 +44,12 @@ export function PlaybackSettingsPane({
         />
 
         <PlaybackSwitch
+          title="Normalize volume"
+          description="Keep perceived loudness more consistent when switching between tracks."
+          checked={settings.normalizeVolume}
+          onCheckedChange={(checked) => onChange({ ...settings, normalizeVolume: checked })}
+        />
+        <PlaybackSwitch
           title="Remember playback position"
           description="Resume tracks where you left off."
           checked={settings.rememberTrackPositions}
