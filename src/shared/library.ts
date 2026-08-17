@@ -222,6 +222,7 @@ export type LibrarySettings = {
 export type PlaybackSettings = {
   seekStepSeconds: number;
   volumeStepPercent: number;
+  normalizeVolume: boolean;
   rememberTrackPositions: boolean;
   restoreLastSession: boolean;
   skipUnavailableTracks: boolean;
@@ -435,6 +436,7 @@ export const defaultLibrarySettings = (): LibrarySettings => ({
 export const defaultPlaybackSettings = (): PlaybackSettings => ({
   seekStepSeconds: 5,
   volumeStepPercent: 5,
+  normalizeVolume: false,
   rememberTrackPositions: true,
   restoreLastSession: true,
   skipUnavailableTracks: true,
