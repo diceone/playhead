@@ -14,6 +14,7 @@ export function usePlayerKeyboardShortcuts({
   onSelectAdjacentTrack,
   onPlaySelectedTrack,
   onToggleSelectedTrackFavorite,
+  onPitchChange,
 }: {
   playbackSettings: PlaybackSettings;
   onToggleQueue: () => void;
@@ -25,6 +26,7 @@ export function usePlayerKeyboardShortcuts({
   onSelectAdjacentTrack: (direction: 1 | -1, step?: number) => void;
   onPlaySelectedTrack: () => void;
   onToggleSelectedTrackFavorite: () => void;
+  onPitchChange: (delta: number) => void;
 }) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -98,6 +100,26 @@ export function usePlayerKeyboardShortcuts({
         return;
       }
 
+      // Pitch control: [ and ] to nudge, Shift for larger steps
+      if (event.key === "[" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        onPitchChange(event.shiftKey ? -1 : -0.1);
+        return;
+      }
+
+      if (event.key === "]" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        onPitchChange(event.shiftKey ? 1 : 0.1);
+        return;
+      }
+
+      // Reset pitch with Backslash
+      if (event.key === "\\" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        onPitchChange(-playbackSettings.pitchPercent);
+        return;
+      }
+
       if (event.code === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         onPlaySelectedTrack();
@@ -116,6 +138,7 @@ export function usePlayerKeyboardShortcuts({
     onChangeVolumeBy,
     onOpenSearch,
     onOpenSettings,
+    onPitchChange,
     onPlaySelectedTrack,
     onSeekBy,
     onSelectAdjacentTrack,

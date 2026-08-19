@@ -1,4 +1,4 @@
-import type { LibraryTag, LibraryTrack } from "../../../../shared/library";
+import type { LibraryTag, LibraryTrack, PitchMode } from "../../../../shared/library";
 import { AnimatePresence, motion } from "framer-motion";
 import { SliderComfortable } from "@/components/ui/slider";
 import { formatTime } from "@/lib/format";
@@ -46,6 +46,8 @@ export function Player({
   shuffleEnabled,
   repeatMode,
   volume,
+  pitchPercent,
+  pitchMode,
   onTogglePlayback,
   onPreviousTrack,
   onNextTrack,
@@ -54,6 +56,8 @@ export function Player({
   onToggleFavorite,
   onTrackInfoContextMenu,
   onVolumeChange,
+  onPitchChange,
+  onCyclePitchMode,
 }: {
   activeTrack: LibraryTrack | null;
   activeTags: LibraryTag[];
@@ -69,6 +73,8 @@ export function Player({
   shuffleEnabled: boolean;
   repeatMode: RepeatMode;
   volume: number;
+  pitchPercent: number;
+  pitchMode: PitchMode;
   onTogglePlayback: () => void;
   onPreviousTrack: () => void;
   onNextTrack: () => void;
@@ -77,6 +83,8 @@ export function Player({
   onToggleFavorite: () => void;
   onTrackInfoContextMenu: (point: MenuAnchorPoint) => void;
   onVolumeChange: (volume: number) => void;
+  onPitchChange: (percent: number) => void;
+  onCyclePitchMode: () => void;
 }) {
   const windowDragHandlers = useWindowDrag<HTMLDivElement>();
   const icons = useIcons();
@@ -84,11 +92,16 @@ export function Player({
   const ShuffleIcon = icons.shuffle;
   const RepeatIcon = icons.repeat;
   const VolumeIcon = icons["volume-2"];
+  const isKeyLocked = pitchMode === "key-lock";
+  const pitchLabel = `${pitchPercent > 0 ? "+" : ""}${pitchPercent}%`;
+  const adjustedBpm = activeTrack?.bpm ? Math.round(activeTrack.bpm * (1 + pitchPercent / 100)) : null;
   const trackInfo = activeTrack
     ? [
         formatAudioFormat(activeTrack),
         formatBitRate(activeTrack.bitRate),
-        formatBpm(activeTrack.bpm),
+        adjustedBpm
+          ? `${adjustedBpm} BPM${pitchPercent !== 0 ? ` (${Math.round(activeTrack.bpm!)})` : ""}`
+          : formatBpm(activeTrack.bpm),
       ].filter((part): part is string => Boolean(part))
     : [];
   const visibleTags = activeTags.slice(0, 3);
@@ -237,6 +250,50 @@ export function Player({
           <span>{formatTime(currentTime)}</span>
           <span>{formatTime(duration)}</span>
         </div>
+      </div>
+
+      {/* Pitch control row */}
+      <div className="no-drag flex items-center gap-3 py-0.5">
+        <button
+          type="button"
+          className={`grid h-7 shrink-0 place-items-center rounded-full border px-2 text-[10px] font-bold leading-none transition ${
+            pitchPercent !== 0
+              ? "border-primary bg-primary/15 text-primary"
+              : "border-white/10 bg-white/[0.045] text-muted-foreground"
+          } hover:bg-white/[0.1]`}
+          title="Reset pitch to 0%"
+          onClick={() => onPitchChange(0)}
+        >
+          {pitchLabel}
+        </button>
+        <div className="relative flex-1">
+          <SliderComfortable
+            value={pitchPercent}
+            min={-16}
+            max={16}
+            step={0.1}
+            variant="scrubber"
+            formatValue={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)}%`}
+            className={`h-7 ${pitchPercent !== 0 ? "border-primary/40 bg-primary/[0.06]" : "border-white/10 bg-white/[0.045]"}`}
+            onChange={(v) => onPitchChange(Math.round(v * 10) / 10)}
+          />
+        </div>
+        <button
+          type="button"
+          className={`grid h-7 shrink-0 items-center gap-1 rounded-full border px-2 text-[10px] font-semibold leading-none transition ${
+            isKeyLocked
+              ? "border-white/20 bg-white/[0.08] text-foreground"
+              : "border-white/10 bg-white/[0.045] text-muted-foreground"
+          } hover:bg-white/[0.1]`}
+          title={isKeyLocked ? "Key Lock on (tempo only)" : "Key Lock off (vinyl mode)"}
+          onClick={onCyclePitchMode}
+        >
+          <svg width="11" height="13" viewBox="0 0 11 13" fill="none" className="shrink-0">
+            <path d="M1 1L5 6.5L1 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M6 1L10 6.5L6 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity={isKeyLocked ? "1" : "0.4"}/>
+          </svg>
+          <span>{isKeyLocked ? "LOCK" : "VINYL"}</span>
+        </button>
       </div>
 
       <div className="grid grid-cols-[1fr_auto_1fr] items-center py-1">

@@ -17,6 +17,7 @@ import {
   type LibraryTag,
   type LibraryTrack,
   type PlaybackSettings,
+  type PitchMode,
   type PlaylistExportFormat,
   type PlaylistImportTrack,
   type SoundCloudCollection,
@@ -443,6 +444,8 @@ export function App() {
   const [metadataDialog, setMetadataDialog] = useState<MetadataDialogState>(null);
   const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("off");
+  const [pitchPercent, setPitchPercent] = useState(0);
+  const [pitchMode, setPitchMode] = useState<PitchMode>("key-lock");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false);
@@ -2126,6 +2129,65 @@ export function App() {
     wavesurferRef.current?.setVolume(clampedVolume);
   }, []);
 
+  // Apply pitch to the media element whenever pitch state changes
+  useEffect(() => {
+    const wavesurfer = wavesurferRef.current;
+    if (!wavesurfer) return;
+    const media = wavesurfer.getMediaElement();
+    if (!media) return;
+    media.playbackRate = 1 + pitchPercent / 100;
+    media.preservesPitch = pitchMode === "key-lock";
+  }, [pitchPercent, pitchMode]);
+
+  // Also apply pitch when a new track is loaded
+  useEffect(() => {
+    if (!loadedTrackIdRef.current) return;
+    const wavesurfer = wavesurferRef.current;
+    if (!wavesurfer) return;
+    const media = wavesurfer.getMediaElement();
+    if (!media) return;
+    media.playbackRate = 1 + pitchPercent / 100;
+    media.preservesPitch = pitchMode === "key-lock";
+  }, [loadedTrackIdRef.current, pitchPercent, pitchMode]);
+
+  const setPlayerPitch = useCallback((nextPitch: number) => {
+    const clamped = Math.round(Math.max(-16, Math.min(16, nextPitch)) * 10) / 10;
+    setPitchPercent(clamped);
+    // Persist to library
+    setLibrary((current) => {
+      const nextState = {
+        ...current,
+        settings: {
+          ...current.settings,
+          playback: { ...current.settings.playback, pitchPercent: clamped },
+        },
+      };
+      libraryRef.current = nextState;
+      void window.playhead.saveLibraryState(nextState);
+      return nextState;
+    });
+  }, []);
+
+  const cyclePitchMode = useCallback(() => {
+    setPitchMode((prev) => {
+      const next: PitchMode = prev === "key-lock" ? "vinyl" : "key-lock";
+      // Persist to library
+      setLibrary((current) => {
+        const nextState = {
+          ...current,
+          settings: {
+            ...current.settings,
+            playback: { ...current.settings.playback, pitchMode: next },
+          },
+        };
+        libraryRef.current = nextState;
+        void window.playhead.saveLibraryState(nextState);
+        return nextState;
+      });
+      return next;
+    });
+  }, []);
+
   const seekBy = useCallback((offset: number) => {
     const wavesurfer = wavesurferRef.current;
     if (!wavesurfer) return;
@@ -2509,6 +2571,8 @@ export function App() {
       setLibrary(nextState);
       setShuffleEnabled(nextState.settings.session.shuffleEnabled);
       setRepeatMode(nextState.settings.session.repeatMode);
+      setPitchPercent(nextState.settings.playback.pitchPercent ?? 0);
+      setPitchMode(nextState.settings.playback.pitchMode ?? "key-lock");
       void window.playhead.watchLibraryFolders(
         nextState.settings.library.watchFolders ? nextState.folders : [],
         nextState.settings.library.enabledAudioExtensions,
@@ -2783,6 +2847,7 @@ export function App() {
     onSelectAdjacentTrack: selectAdjacentTrackInList,
     onPlaySelectedTrack: playSelectedTrack,
     onToggleSelectedTrackFavorite: toggleSelectedTrackFavorite,
+    onPitchChange: (delta) => setPlayerPitch(pitchPercent + delta),
   });
 
   useEffect(() => {
@@ -3053,6 +3118,10 @@ export function App() {
                   }}
                   onTrackInfoContextMenu={setPlayerTrackMenuPoint}
                   onVolumeChange={setPlayerVolume}
+                  pitchPercent={pitchPercent}
+                  pitchMode={pitchMode}
+                  onPitchChange={setPlayerPitch}
+                  onCyclePitchMode={cyclePitchMode}
                 />
 
                 {activeTrack && (

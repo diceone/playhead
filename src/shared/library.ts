@@ -220,12 +220,16 @@ export type LibrarySettings = {
   rescanOnLaunch: boolean;
 };
 
+export type PitchMode = "key-lock" | "vinyl";
+
 export type PlaybackSettings = {
   seekStepSeconds: number;
   volumeStepPercent: number;
   rememberTrackPositions: boolean;
   restoreLastSession: boolean;
   skipUnavailableTracks: boolean;
+  pitchPercent: number;
+  pitchMode: PitchMode;
 };
 
 export type AppearanceSettings = {
@@ -439,6 +443,8 @@ export const defaultPlaybackSettings = (): PlaybackSettings => ({
   rememberTrackPositions: true,
   restoreLastSession: true,
   skipUnavailableTracks: true,
+  pitchPercent: 0,
+  pitchMode: "key-lock",
 });
 
 export const defaultAppearanceSettings = (): AppearanceSettings => ({
@@ -447,7 +453,7 @@ export const defaultAppearanceSettings = (): AppearanceSettings => ({
 });
 
 export const defaultTelemetrySettings = (): TelemetrySettings => ({
-  enabled: true,
+  enabled: false,
 });
 
 export const defaultLastfmSettings = (): LastfmSettings => ({

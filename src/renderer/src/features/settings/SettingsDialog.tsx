@@ -233,6 +233,9 @@ export function SettingsDialog({
       keys: [`${modifierLabel} ↓`],
       detail: `${savedPlaybackSettings.volumeStepPercent}%. Hold Shift for ${shiftVolumeStep}%.`,
     },
+    { action: "Pitch down", keys: ["["], detail: "-0.1% per tap. Hold Shift for -1%." },
+    { action: "Pitch up", keys: ["]"], detail: "+0.1% per tap. Hold Shift for +1%." },
+    { action: "Reset pitch", keys: ["\\"], detail: "Reset pitch to 0%." },
   ];
   const advancedActions = [
     {
