@@ -31,6 +31,24 @@ function createBuffer(samples: number[], sampleRate = 1): AudioBuffer {
   } as unknown as AudioBuffer;
 }
 
+function createSineBuffer({
+  frequency,
+  sampleRate,
+  duration,
+  amplitude = 1,
+}: {
+  frequency: number;
+  sampleRate: number;
+  duration: number;
+  amplitude?: number;
+}): AudioBuffer {
+  const samples = Array.from(
+    { length: sampleRate * duration },
+    (_, index) => amplitude * Math.sin((2 * Math.PI * frequency * index) / sampleRate),
+  );
+  return createBuffer(samples, sampleRate);
+}
+
 describe("shouldAnalyzeTrackBpm", () => {
   it("includes tracks without bpm", () => {
     expect(shouldAnalyzeTrackBpm(createTrack())).toBe(true);
@@ -47,11 +65,11 @@ describe("shouldAnalyzeTrackBpm", () => {
 });
 
 describe("volume normalization", () => {
-  it("estimates steady-state loudness from decoded audio", () => {
-    const samples = Array.from({ length: 16000 }, () => 0.1);
-    const loudnessDb = estimateIntegratedLoudnessDb(createBuffer(samples, 16000));
-    expect(loudnessDb).not.toBeNull();
-    expect(loudnessDb!).toBeCloseTo(-20.691, 2);
+  it.each([16_000, 48_000])("matches the BS.1770 reference level at %i Hz", (sampleRate) => {
+    const loudnessDb = estimateIntegratedLoudnessDb(
+      createSineBuffer({ frequency: 997, sampleRate, duration: 1 }),
+    );
+    expect(loudnessDb).toBeCloseTo(-3.01, 1);
   });
 
   it("attenuates toward -18 dB without boosting quiet tracks", () => {

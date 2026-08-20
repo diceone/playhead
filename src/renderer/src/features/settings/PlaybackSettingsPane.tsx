@@ -53,9 +53,7 @@ export function PlaybackSettingsPane({
           title="Remember playback position"
           description="Resume tracks where you left off."
           checked={settings.rememberTrackPositions}
-          onCheckedChange={(checked) =>
-            onChange({ ...settings, rememberTrackPositions: checked })
-          }
+          onCheckedChange={(checked) => onChange({ ...settings, rememberTrackPositions: checked })}
         />
         <PlaybackSwitch
           title="Restore last session"

@@ -1,13 +1,8 @@
-import WaveSurfer from "wavesurfer.js";
-import type { LibraryTrack } from "../../../../shared/library";
-import {
-  decodeAudioBytes,
-  decodeAudioTrack,
-  estimateIntegratedLoudnessDb,
-  getLoudnessNormalizationGain,
-} from "./audio-analysis";
+import type { AudioFileRevision, LibraryTrack } from "../../../../shared/library";
+import { decodeAudioBytes, decodeAudioTrack, getLoudnessNormalizationGain } from "./audio-analysis";
+import { analyzeLoudnessOffThread } from "./loudness-worker-client";
 
-const normalizationCacheStorageKey = "playhead:volume-normalization-cache:v1";
+const normalizationCacheStorageKey = "playhead:volume-normalization-cache:v2";
 const normalizationCacheLimit = 2_000;
 
 type CachedNormalization = {
@@ -18,77 +13,8 @@ type CachedNormalization = {
 
 type NormalizationCache = Record<string, CachedNormalization>;
 
-type VolumeNormalizationRuntime = {
-  patched: boolean;
-  activeWaveSurfer: WaveSurfer | null;
-  baseVolume: number;
-  gain: number;
-  rawSetVolume: ((waveSurfer: WaveSurfer, volume: number) => void) | null;
-  activeTrack: LibraryTrack | null;
-  requestId: number;
-};
-
-const globalScope = globalThis as typeof globalThis & {
-  __playheadVolumeNormalizationRuntime?: VolumeNormalizationRuntime;
-};
-const runtime =
-  globalScope.__playheadVolumeNormalizationRuntime ||
-  (globalScope.__playheadVolumeNormalizationRuntime = {
-    patched: false,
-    activeWaveSurfer: null,
-    baseVolume: 1,
-    gain: 1,
-    rawSetVolume: null,
-    activeTrack: null,
-    requestId: 0,
-  });
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function applyRuntimeGain(): void {
-  const waveSurfer = runtime.activeWaveSurfer;
-  if (!waveSurfer || !runtime.rawSetVolume) return;
-  runtime.rawSetVolume(waveSurfer, clamp(runtime.baseVolume * runtime.gain, 0, 1));
-}
-
-if (!runtime.patched) {
-  const rawCreate = WaveSurfer.create.bind(WaveSurfer);
-  const rawSetVolume = WaveSurfer.prototype.setVolume;
-  const rawDestroy = WaveSurfer.prototype.destroy;
-
-  runtime.rawSetVolume = (waveSurfer, volume) => rawSetVolume.call(waveSurfer, volume);
-
-  WaveSurfer.create = ((options: Parameters<typeof WaveSurfer.create>[0]) => {
-    const waveSurfer = rawCreate(options);
-    runtime.activeWaveSurfer = waveSurfer;
-    runtime.baseVolume = 1;
-    runtime.gain = 1;
-    return waveSurfer;
-  }) as typeof WaveSurfer.create;
-
-  WaveSurfer.prototype.setVolume = function setVolumeWithNormalization(volume: number) {
-    runtime.activeWaveSurfer = this;
-    runtime.baseVolume = clamp(volume, 0, 1);
-    applyRuntimeGain();
-  };
-
-  WaveSurfer.prototype.destroy = function destroyWithNormalizationCleanup() {
-    if (runtime.activeWaveSurfer === this) {
-      runtime.activeWaveSurfer = null;
-      runtime.activeTrack = null;
-      runtime.baseVolume = 1;
-      runtime.gain = 1;
-    }
-    return rawDestroy.call(this);
-  };
-
-  runtime.patched = true;
-}
-
 let normalizationCache: NormalizationCache | null = null;
-const analysisPromises = new Map<string, Promise<number>>();
+let analysisQueue: Promise<void> = Promise.resolve();
 
 function getNormalizationCache(): NormalizationCache {
   if (normalizationCache) return normalizationCache;
@@ -107,7 +33,10 @@ function getNormalizationCache(): NormalizationCache {
   return normalizationCache;
 }
 
-function getTrackCacheKey(track: LibraryTrack): string {
+export function buildTrackNormalizationCacheKey(
+  track: LibraryTrack,
+  revision: AudioFileRevision | null,
+): string {
   const sourceKey = track.soundcloud
     ? `soundcloud:${track.soundcloud.id}`
     : `${track.source || "local"}:${track.id}`;
@@ -117,14 +46,26 @@ function getTrackCacheKey(track: LibraryTrack): string {
     track.fileName,
     track.sampleRate || 0,
     track.bitRate || 0,
+    revision ? Math.trunc(revision.size) : "remote",
+    revision ? Math.trunc(revision.mtimeMs) : "remote",
   ].join("|");
 }
 
-function saveNormalizationCacheEntry(
-  cacheKey: string,
-  loudnessDb: number,
-  gain: number,
-): void {
+async function resolveTrackCacheKey(track: LibraryTrack): Promise<string | null> {
+  if (track.source === "soundcloud" || track.soundcloud) {
+    return buildTrackNormalizationCacheKey(track, null);
+  }
+
+  try {
+    const revision = await window.playhead.getAudioFileRevision(track.path);
+    return buildTrackNormalizationCacheKey(track, revision);
+  } catch (error) {
+    console.warn("Could not read audio file revision", { path: track.path, error });
+    return null;
+  }
+}
+
+function saveNormalizationCacheEntry(cacheKey: string, loudnessDb: number, gain: number): void {
   const cache = getNormalizationCache();
   cache[cacheKey] = { gain, loudnessDb, analyzedAt: Date.now() };
 
@@ -161,75 +102,59 @@ async function decodeTrackForNormalization(track: LibraryTrack): Promise<AudioBu
   return decodeAudioTrack(track, window.playhead.readAudioFile);
 }
 
-function setPlaybackNormalizationGain(gain: number): void {
-  runtime.gain = Number.isFinite(gain) ? clamp(gain, 0.25, 1) : 1;
-  applyRuntimeGain();
+function enqueueAnalysis<T>(task: () => Promise<T>): Promise<T> {
+  const result = analysisQueue.then(task, task);
+  analysisQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
-export function getCachedTrackNormalizationGain(track: LibraryTrack): number | null {
-  const cached = getNormalizationCache()[getTrackCacheKey(track)];
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export async function getCachedTrackNormalizationGain(track: LibraryTrack): Promise<number | null> {
+  const cacheKey = await resolveTrackCacheKey(track);
+  if (!cacheKey) return null;
+  const cached = getNormalizationCache()[cacheKey];
   return cached && Number.isFinite(cached.gain) ? cached.gain : null;
 }
 
-export function analyzeTrackNormalizationGain(track: LibraryTrack): Promise<number> {
-  const cacheKey = getTrackCacheKey(track);
-  const cached = getNormalizationCache()[cacheKey];
-  if (cached && Number.isFinite(cached.gain)) return Promise.resolve(cached.gain);
+export async function analyzeTrackNormalizationGain(
+  track: LibraryTrack,
+  signal?: AbortSignal,
+): Promise<number> {
+  const cacheKey = await resolveTrackCacheKey(track);
+  if (signal?.aborted) return 1;
+  if (cacheKey) {
+    const cached = getNormalizationCache()[cacheKey];
+    if (cached && Number.isFinite(cached.gain)) return cached.gain;
+  }
 
-  const pending = analysisPromises.get(cacheKey);
-  if (pending) return pending;
+  return enqueueAnalysis(async () => {
+    if (signal?.aborted) return 1;
+    if (cacheKey) {
+      const cached = getNormalizationCache()[cacheKey];
+      if (cached && Number.isFinite(cached.gain)) return cached.gain;
+    }
 
-  const analysis = (async () => {
     try {
       const buffer = await decodeTrackForNormalization(track);
-      if (!buffer) return 1;
+      if (!buffer || signal?.aborted) return 1;
 
-      const loudnessDb = estimateIntegratedLoudnessDb(buffer);
-      if (loudnessDb === null) return 1;
+      const loudnessDb = await analyzeLoudnessOffThread(buffer, signal);
+      if (loudnessDb === null || signal?.aborted) return 1;
 
       const gain = getLoudnessNormalizationGain(loudnessDb);
-      saveNormalizationCacheEntry(cacheKey, loudnessDb, gain);
+      if (cacheKey) saveNormalizationCacheEntry(cacheKey, loudnessDb, gain);
       return gain;
     } catch (error) {
-      console.warn("Failed to analyze track loudness", { path: track.path, error });
+      if (!isAbortError(error)) {
+        console.warn("Failed to analyze track loudness", { path: track.path, error });
+      }
       return 1;
-    } finally {
-      analysisPromises.delete(cacheKey);
     }
-  })();
-
-  analysisPromises.set(cacheKey, analysis);
-  return analysis;
-}
-
-export async function applyTrackVolumeNormalization(track: LibraryTrack | null): Promise<void> {
-  const requestId = runtime.requestId + 1;
-  runtime.requestId = requestId;
-  runtime.activeTrack = track;
-
-  if (!track) {
-    setPlaybackNormalizationGain(1);
-    return;
-  }
-
-  let enabled = false;
-  try {
-    const library = await window.playhead.getLibraryState();
-    enabled = library.settings.playback.normalizeVolume;
-  } catch (error) {
-    console.warn("Could not read volume normalization setting", error);
-  }
-
-  if (requestId !== runtime.requestId || runtime.activeTrack?.id !== track.id) return;
-  if (!enabled) {
-    setPlaybackNormalizationGain(1);
-    return;
-  }
-
-  const cachedGain = getCachedTrackNormalizationGain(track);
-  setPlaybackNormalizationGain(cachedGain ?? 1);
-
-  const gain = await analyzeTrackNormalizationGain(track);
-  if (requestId !== runtime.requestId || runtime.activeTrack?.id !== track.id) return;
-  setPlaybackNormalizationGain(gain);
+  });
 }

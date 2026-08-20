@@ -58,6 +58,7 @@ describe("library store settings", () => {
     expect(defaultPlaybackSettings()).toEqual({
       seekStepSeconds: 5,
       volumeStepPercent: 5,
+      normalizeVolume: false,
       rememberTrackPositions: true,
       restoreLastSession: true,
       skipUnavailableTracks: true,

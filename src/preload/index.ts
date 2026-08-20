@@ -38,6 +38,8 @@ const api: PlayheadApi = {
   getDroppedFilePath: (file: File) => webUtils.getPathForFile(file),
   getAudioFileUrl: (path: string) => ipcRenderer.invoke("library:get-audio-url", path),
   readAudioFile: (path: string) => ipcRenderer.invoke("library:read-audio-file", path),
+  getAudioFileRevision: (path: string) =>
+    ipcRenderer.invoke("library:get-audio-file-revision", path),
   getWaveformCache: (request: WaveformCacheRequest) =>
     ipcRenderer.invoke("library:get-waveform-cache", request),
   saveWaveformCache: (write: WaveformCacheWrite) =>

@@ -245,6 +245,11 @@ export function registerLibraryIpc(): void {
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   });
 
+  ipcMain.handle("library:get-audio-file-revision", async (_event, filePath: string) => {
+    const fileInfo = await stat(filePath);
+    return { size: fileInfo.size, mtimeMs: fileInfo.mtimeMs };
+  });
+
   ipcMain.handle("library:get-waveform-cache", async (_event, request: WaveformCacheRequest) => {
     return readWaveformCache(request, {
       directory: join(app.getPath("userData"), "waveforms"),

@@ -1,8 +1,6 @@
-import { useEffect } from "react";
 import type { LibraryTag, LibraryTrack } from "../../../../shared/library";
 import { AnimatePresence, motion } from "framer-motion";
 import { SliderComfortable } from "@/components/ui/slider";
-import { applyTrackVolumeNormalization } from "@/features/audio/volume-normalization";
 import { formatTime } from "@/lib/format";
 import { useIcons } from "@/lib/icon-context";
 import type { MenuAnchorPoint } from "@/lib/menu-position";
@@ -95,10 +93,6 @@ export function Player({
     : [];
   const visibleTags = activeTags.slice(0, 3);
   const hiddenTagCount = Math.max(0, activeTags.length - visibleTags.length);
-
-  useEffect(() => {
-    void applyTrackVolumeNormalization(activeTrack);
-  }, [activeTrack, isPlaying]);
 
   return (
     <section className="relative flex shrink-0 flex-col gap-[10px] px-4 pt-4">

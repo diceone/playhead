@@ -73,6 +73,11 @@ import {
   waveformAnalysisMaxPeaks,
   waveformAnalysisPeakRate,
 } from "@/features/audio/audio-analysis";
+import { PlaybackVolumeController } from "@/features/audio/playback-volume";
+import {
+  analyzeTrackNormalizationGain,
+  getCachedTrackNormalizationGain,
+} from "@/features/audio/volume-normalization";
 import {
   emptyLibraryState,
   createPlaylist,
@@ -408,6 +413,18 @@ export function App() {
   const rememberTrackPositionRef = useRef<(trackId: string, time: number) => void>(() => {});
   const clearTrackPositionRef = useRef<(trackId: string) => void>(() => {});
   const volumeRef = useRef(1);
+  const volumeControllerRef = useRef<PlaybackVolumeController | null>(null);
+  if (!volumeControllerRef.current) {
+    volumeControllerRef.current = new PlaybackVolumeController((nextVolume) => {
+      wavesurferRef.current?.setVolume(nextVolume);
+    });
+  }
+  useEffect(
+    () => () => {
+      volumeControllerRef.current?.dispose();
+    },
+    [],
+  );
   const didLoadLibraryRef = useRef(false);
   const didRestoreSessionRef = useRef(false);
   const lastPositionSaveRef = useRef(0);
@@ -2113,10 +2130,9 @@ export function App() {
   }, [activeTrack, activeTrackId, allPlayableTracksById, selectTrack, selectedTrackIds, tracks]);
 
   const setPlayerVolume = useCallback((nextVolume: number) => {
-    const clampedVolume = clamp(nextVolume, 0, 1);
-    volumeRef.current = clampedVolume;
-    setVolume(clampedVolume);
-    wavesurferRef.current?.setVolume(clampedVolume);
+    const baseVolume = volumeControllerRef.current?.setBaseVolume(nextVolume) ?? 1;
+    volumeRef.current = baseVolume;
+    setVolume(baseVolume);
   }, []);
 
   const seekBy = useCallback((offset: number) => {
@@ -2134,11 +2150,37 @@ export function App() {
 
   const changeVolumeBy = useCallback(
     (offset: number) => {
-      const wavesurfer = wavesurferRef.current;
-      setPlayerVolume((wavesurfer?.getVolume() ?? volumeRef.current) + offset);
+      setPlayerVolume((volumeControllerRef.current?.getBaseVolume() ?? volumeRef.current) + offset);
     },
     [setPlayerVolume],
   );
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    const controller = volumeControllerRef.current;
+
+    if (!controller) return () => abortController.abort();
+    if (!activeTrack || !library.settings.playback.normalizeVolume || isLoadingTrack) {
+      controller.setNormalizationGain(1, activeTrack && !isLoadingTrack ? 160 : 0);
+      return () => abortController.abort();
+    }
+
+    controller.setNormalizationGain(1);
+    void (async () => {
+      const cachedGain = await getCachedTrackNormalizationGain(activeTrack);
+      if (abortController.signal.aborted) return;
+      if (cachedGain !== null) {
+        controller.setNormalizationGain(cachedGain, 160);
+        return;
+      }
+
+      const gain = await analyzeTrackNormalizationGain(activeTrack, abortController.signal);
+      if (abortController.signal.aborted) return;
+      controller.setNormalizationGain(gain, 240);
+    })();
+
+    return () => abortController.abort();
+  }, [activeTrack, isLoadingTrack, library.settings.playback.normalizeVolume]);
 
   const selectTrackInList = useCallback(
     (track: LibraryTrack, event?: React.MouseEvent<HTMLDivElement>) => {
@@ -2206,19 +2248,16 @@ export function App() {
     if (selectedTrack) void selectTrack(selectedTrack, true, 0, true, "source");
   }, [allPlayableTracksById, selectTrack, selectedTrackIds]);
 
-  const selectLibrarySource = useCallback(
-    (source: LibraryState["selectedSource"]) => {
-      setSelectedLibraryBrowserItemIds([]);
-      libraryBrowserSelectionAnchorIdRef.current = null;
-      setLibrary((current) => {
-        const nextState = { ...current, selectedSource: source };
-        libraryRef.current = nextState;
-        void window.playhead.saveLibrarySelectedSource(source);
-        return nextState;
-      });
-    },
-    [],
-  );
+  const selectLibrarySource = useCallback((source: LibraryState["selectedSource"]) => {
+    setSelectedLibraryBrowserItemIds([]);
+    libraryBrowserSelectionAnchorIdRef.current = null;
+    setLibrary((current) => {
+      const nextState = { ...current, selectedSource: source };
+      libraryRef.current = nextState;
+      void window.playhead.saveLibrarySelectedSource(source);
+      return nextState;
+    });
+  }, []);
 
   const selectSoundCloudSource = useCallback(
     async (collectionId: string) => {
@@ -2587,7 +2626,9 @@ export function App() {
         .then((scanned) => {
           const latest = libraryRef.current;
           const scannedState = mergeScannedFolder(latest, scanned);
-          return persistLibrary(mergeScannedLibraryState(latest, scannedState, [scanned.folder.id]));
+          return persistLibrary(
+            mergeScannedLibraryState(latest, scannedState, [scanned.folder.id]),
+          );
         })
         .catch((error) => setError(getErrorMessage(error, "Could not rescan changed folder.")));
     });
@@ -2672,9 +2713,8 @@ export function App() {
       dragToSeek: true,
       sampleRate: 16000,
     });
-    wavesurfer.setVolume(volumeRef.current);
-
     wavesurferRef.current = wavesurfer;
+    volumeControllerRef.current?.setBaseVolume(volumeRef.current);
     setIsWaveformEngineReady(true);
     const unsubscribers = [
       wavesurfer.on("ready", (nextDuration) => {

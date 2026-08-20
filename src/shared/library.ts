@@ -313,6 +313,11 @@ export type WaveformCacheRequest = {
   duration: number;
 };
 
+export type AudioFileRevision = {
+  size: number;
+  mtimeMs: number;
+};
+
 export type WaveformCacheEntry = {
   duration: number;
   peaks: number[][];
@@ -348,6 +353,7 @@ export type PlayheadApi = {
   getDroppedFilePath: (file: File) => string;
   getAudioFileUrl: (path: string) => Promise<string>;
   readAudioFile: (path: string) => Promise<ArrayBuffer>;
+  getAudioFileRevision: (path: string) => Promise<AudioFileRevision>;
   getWaveformCache: (request: WaveformCacheRequest) => Promise<WaveformCacheEntry | null>;
   saveWaveformCache: (write: WaveformCacheWrite) => Promise<void>;
   getBpmCache: (request: BpmCacheRequest) => Promise<BpmCacheEntry | null>;
