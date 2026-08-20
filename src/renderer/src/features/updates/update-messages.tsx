@@ -62,4 +62,13 @@ export const updateMessagesByVersion: Record<string, UpdateMessage> = {
     ),
     buttonLabel: "Got it",
   },
+  "0.2.3": {
+    title: "Playhead has been updated",
+    description: (
+      <ul>
+        <li>Added volume normalization</li>
+      </ul>
+    ),
+    buttonLabel: "Got it",
+  },
 };
