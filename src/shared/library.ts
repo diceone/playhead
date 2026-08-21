@@ -45,6 +45,8 @@ export type LibraryTrack = {
   source?: TrackSource;
   path: string;
   fileName: string;
+  fileSize?: number;
+  fileModifiedAt?: number;
   title: string;
   artist: string;
   album?: string;
@@ -349,7 +351,9 @@ export type PlayheadApi = {
   saveLibrarySelectedSource: (selectedSource: SelectedSource | null) => Promise<LibraryState>;
   selectMusicFolder: (extensions?: string[]) => Promise<ScannedFolder[]>;
   scanFolder: (folder: LibraryFolder, extensions?: string[]) => Promise<ScannedFolder>;
+  scanFolders: (folders: LibraryFolder[], extensions?: string[]) => Promise<ScannedFolder[]>;
   scanFolderPath: (path: string, extensions?: string[]) => Promise<ScannedFolder>;
+  scanFolderPaths: (paths: string[], extensions?: string[]) => Promise<ScannedFolder[]>;
   getDroppedFilePath: (file: File) => string;
   getAudioFileUrl: (path: string) => Promise<string>;
   readAudioFile: (path: string) => Promise<ArrayBuffer>;

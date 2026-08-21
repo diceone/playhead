@@ -1384,11 +1384,11 @@ export function App() {
         let lastScannedFolderId: string | null = null;
         const scannedFolderIds: string[] = [];
 
-        for (const folderPath of uniqueFolderPaths) {
-          const scanned = await window.playhead.scanFolderPath(
-            folderPath,
-            library.settings.library.enabledAudioExtensions,
-          );
+        const scannedFolders = await window.playhead.scanFolderPaths(
+          uniqueFolderPaths,
+          library.settings.library.enabledAudioExtensions,
+        );
+        for (const scanned of scannedFolders) {
           nextState = mergeScannedFolder(nextState, scanned);
           lastScannedFolderId = scanned.folder.id;
           scannedFolderIds.push(scanned.folder.id);
@@ -1435,11 +1435,11 @@ export function App() {
       try {
         let nextState = state;
         const scannedFolderIds = state.folders.map((folder) => folder.id);
-        for (const folder of state.folders) {
-          const scanned = await window.playhead.scanFolder(
-            folder,
-            state.settings.library.enabledAudioExtensions,
-          );
+        const scannedFolders = await window.playhead.scanFolders(
+          state.folders,
+          state.settings.library.enabledAudioExtensions,
+        );
+        for (const scanned of scannedFolders) {
           nextState = mergeScannedFolder(nextState, scanned);
         }
         const latest = libraryRef.current;

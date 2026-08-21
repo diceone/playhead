@@ -22,6 +22,7 @@ vi.mock("../../electron", () => ({
 import {
   normalizeSettings,
   readLibraryState,
+  resetLibraryStoreCache,
   writeLibrarySelectedSource,
   writeLibrarySessionSettings,
   writeLibraryState,
@@ -29,6 +30,7 @@ import {
 } from "../store";
 
 beforeEach(async () => {
+  resetLibraryStoreCache();
   storeTestState.userDataDir = await mkdtemp(join(tmpdir(), "playhead-store-"));
 });
 
@@ -166,6 +168,7 @@ describe("library store settings", () => {
     await writeLibraryState(namedState("Backup"));
     await writeLibraryState(namedState("Primary"));
     await writeFile(join(storeTestState.userDataDir, "library.json"), "{bad json", "utf8");
+    resetLibraryStoreCache();
 
     const state = await readLibraryState();
 
@@ -192,6 +195,20 @@ describe("library store settings", () => {
 
     expect(saved.settings.session.activeTrackId).toBe("track-1");
     expect(saved.playlists[0].trackIds).toEqual(["track-1", "track-2"]);
+  });
+
+  it("persists volatile session state without rewriting the library index", async () => {
+    await writeLibraryState(namedState("Set"));
+    const libraryBefore = await readFile(join(storeTestState.userDataDir, "library.json"), "utf8");
+
+    const session = { ...defaultAppSettings().session, activeTrackId: "track-1" };
+    await writeLibrarySessionSettings(session);
+    const libraryAfter = await readFile(join(storeTestState.userDataDir, "library.json"), "utf8");
+    resetLibraryStoreCache();
+    const restored = await readLibraryState();
+
+    expect(libraryAfter).toBe(libraryBefore);
+    expect(restored.settings.session.activeTrackId).toBe("track-1");
   });
 
   it("merges analyzed bpm saves into the latest library data", async () => {
@@ -224,6 +241,58 @@ describe("library store settings", () => {
     expect(saved.tracks["track-1"].bpm).toBe(128);
     expect(saved.tracks["track-1"].bpmSource).toBe("analysis");
     expect(saved.playlists[0].trackIds).toEqual(["track-1", "track-2"]);
+  });
+
+  it("restores analyzed BPM updates from the append-only journal", async () => {
+    await writeLibraryState({
+      ...emptyLibraryState(),
+      tracks: {
+        "track-1": {
+          id: "track-1",
+          path: "/music/a.mp3",
+          fileName: "a.mp3",
+          title: "A",
+          artist: "Artist",
+          duration: 1,
+          folderId: "folder-1",
+        },
+      },
+    });
+
+    await writeLibraryTrackAnalysis("track-1", 132);
+    resetLibraryStoreCache();
+    const restored = await readLibraryState();
+
+    expect(restored.tracks["track-1"].bpm).toBe(132);
+    expect(restored.tracks["track-1"].bpmSource).toBe("analysis");
+  });
+
+  it("serializes concurrent runtime and analysis updates without losing either", async () => {
+    await writeLibraryState({
+      ...emptyLibraryState(),
+      tracks: {
+        "track-1": {
+          id: "track-1",
+          path: "/music/a.mp3",
+          fileName: "a.mp3",
+          title: "A",
+          artist: "Artist",
+          duration: 1,
+          folderId: "folder-1",
+        },
+      },
+    });
+    const session = { ...defaultAppSettings().session, activeTrackId: "track-1" };
+
+    await Promise.all([
+      writeLibrarySessionSettings(session),
+      writeLibraryTrackAnalysis("track-1", 140),
+    ]);
+    resetLibraryStoreCache();
+    const restored = await readLibraryState();
+
+    expect(restored.settings.session.activeTrackId).toBe("track-1");
+    expect(restored.tracks["track-1"].bpm).toBe(140);
   });
 
   it("merges selected source saves into the latest library data", async () => {
