@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import { electron } from "../electron";
+import { keepPlaybackWindowAlive } from "./background-playback";
 
 const { app, BrowserWindow, nativeImage, shell } = electron;
 
-function getWindowIconPath(): string {
+export function getWindowIconPath(): string {
   const iconFile = process.platform === "win32" ? "playhead.ico" : "playhead-icon.png";
 
   return app.isPackaged
@@ -11,7 +12,7 @@ function getWindowIconPath(): string {
     : join(__dirname, "../../resources", iconFile);
 }
 
-export function createWindow(): void {
+export function createWindow(isQuitting: () => boolean): Electron.BrowserWindow {
   const iconPath = getWindowIconPath();
   const isMac = process.platform === "darwin";
   const windowIcon = nativeImage.createFromPath(iconPath);
@@ -32,10 +33,15 @@ export function createWindow(): void {
     transparent: true,
     webPreferences: {
       preload: join(__dirname, "../preload/index.mjs"),
+      backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+
+  win.on("close", (event) => {
+    keepPlaybackWindowAlive(event, win, isQuitting());
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -64,4 +70,6 @@ export function createWindow(): void {
       void shell.openExternal(url);
     }
   });
+
+  return win;
 }

@@ -8,12 +8,50 @@ import { installApplicationMenu } from "./menu";
 import { completeSoundCloudAuth, registerSoundCloudIpc } from "./soundcloud/soundcloud";
 import { registerTelemetryIpc, trackAppLaunch } from "./telemetry";
 import { registerUpdaterIpc, startUpdater } from "./updater";
-import { createWindow } from "./window/create-window";
+import { revealPlaybackWindow } from "./window/background-playback";
+import { createWindow, getWindowIconPath } from "./window/create-window";
 import { registerWindowControlsIpc } from "./window/window-controls";
 
-const { app, BrowserWindow, globalShortcut, ipcMain, nativeImage, protocol } = electron;
+const { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, protocol, Tray } = electron;
 
-function sendSoundCloudStateChanged(state: Awaited<ReturnType<typeof completeSoundCloudAuth>>): void {
+let isQuitting = false;
+let tray: Electron.Tray | null = null;
+
+function createMainWindow(): Electron.BrowserWindow {
+  return createWindow(() => isQuitting);
+}
+
+function revealOrCreateMainWindow(): void {
+  const window = BrowserWindow.getAllWindows()[0];
+  if (window) {
+    revealPlaybackWindow(window);
+    return;
+  }
+
+  createMainWindow();
+}
+
+function installBackgroundPlaybackTray(): void {
+  if (process.platform === "darwin" || tray) return;
+
+  const trayIcon = nativeImage
+    .createFromPath(getWindowIconPath())
+    .resize({ width: 18, height: 18 });
+  tray = new Tray(trayIcon);
+  tray.setToolTip("Playhead");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Open Playhead", click: revealOrCreateMainWindow },
+      { type: "separator" },
+      { label: "Quit Playhead", click: () => app.quit() },
+    ]),
+  );
+  tray.on("click", revealOrCreateMainWindow);
+}
+
+function sendSoundCloudStateChanged(
+  state: Awaited<ReturnType<typeof completeSoundCloudAuth>>,
+): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send("soundcloud:state-changed", state);
   }
@@ -56,8 +94,7 @@ app.on("second-instance", (_event, argv) => {
   if (url) handleSoundCloudCallback(url);
   const window = BrowserWindow.getAllWindows()[0];
   if (!window) return;
-  if (window.isMinimized()) window.restore();
-  window.focus();
+  revealPlaybackWindow(window);
 });
 
 app.on("open-url", (event, url) => {
@@ -124,13 +161,18 @@ app.whenReady().then(() => {
   registerUpdaterIpc();
   registerWindowControlsIpc();
   ipcMain.handle("app:get-version", () => app.getVersion());
-  createWindow();
+  createMainWindow();
+  installBackgroundPlaybackTray();
   startUpdater();
   void trackAppLaunch();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    revealOrCreateMainWindow();
   });
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
 app.on("window-all-closed", () => {
@@ -138,6 +180,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  tray?.destroy();
+  tray = null;
   globalShortcut.unregisterAll();
   void closeFolderWatcher();
 });
