@@ -45,6 +45,8 @@ export type LibraryTrack = {
   source?: TrackSource;
   path: string;
   fileName: string;
+  fileSize?: number;
+  fileModifiedAt?: number;
   title: string;
   artist: string;
   album?: string;
@@ -225,6 +227,7 @@ export type PitchMode = "key-lock" | "vinyl";
 export type PlaybackSettings = {
   seekStepSeconds: number;
   volumeStepPercent: number;
+  normalizeVolume: boolean;
   rememberTrackPositions: boolean;
   restoreLastSession: boolean;
   skipUnavailableTracks: boolean;
@@ -317,6 +320,11 @@ export type WaveformCacheRequest = {
   duration: number;
 };
 
+export type AudioFileRevision = {
+  size: number;
+  mtimeMs: number;
+};
+
 export type WaveformCacheEntry = {
   duration: number;
   peaks: number[][];
@@ -348,10 +356,13 @@ export type PlayheadApi = {
   saveLibrarySelectedSource: (selectedSource: SelectedSource | null) => Promise<LibraryState>;
   selectMusicFolder: (extensions?: string[]) => Promise<ScannedFolder[]>;
   scanFolder: (folder: LibraryFolder, extensions?: string[]) => Promise<ScannedFolder>;
+  scanFolders: (folders: LibraryFolder[], extensions?: string[]) => Promise<ScannedFolder[]>;
   scanFolderPath: (path: string, extensions?: string[]) => Promise<ScannedFolder>;
+  scanFolderPaths: (paths: string[], extensions?: string[]) => Promise<ScannedFolder[]>;
   getDroppedFilePath: (file: File) => string;
   getAudioFileUrl: (path: string) => Promise<string>;
   readAudioFile: (path: string) => Promise<ArrayBuffer>;
+  getAudioFileRevision: (path: string) => Promise<AudioFileRevision>;
   getWaveformCache: (request: WaveformCacheRequest) => Promise<WaveformCacheEntry | null>;
   saveWaveformCache: (write: WaveformCacheWrite) => Promise<void>;
   getBpmCache: (request: BpmCacheRequest) => Promise<BpmCacheEntry | null>;
@@ -440,6 +451,7 @@ export const defaultLibrarySettings = (): LibrarySettings => ({
 export const defaultPlaybackSettings = (): PlaybackSettings => ({
   seekStepSeconds: 5,
   volumeStepPercent: 5,
+  normalizeVolume: false,
   rememberTrackPositions: true,
   restoreLastSession: true,
   skipUnavailableTracks: true,

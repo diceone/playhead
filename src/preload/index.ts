@@ -33,11 +33,17 @@ const api: PlayheadApi = {
     ipcRenderer.invoke("library:select-folder", extensions),
   scanFolder: (folder: LibraryFolder, extensions?: string[]) =>
     ipcRenderer.invoke("library:scan-folder", folder, extensions),
+  scanFolders: (folders: LibraryFolder[], extensions?: string[]) =>
+    ipcRenderer.invoke("library:scan-folders", folders, extensions),
   scanFolderPath: (path: string, extensions?: string[]) =>
     ipcRenderer.invoke("library:scan-folder-path", path, extensions),
+  scanFolderPaths: (paths: string[], extensions?: string[]) =>
+    ipcRenderer.invoke("library:scan-folder-paths", paths, extensions),
   getDroppedFilePath: (file: File) => webUtils.getPathForFile(file),
   getAudioFileUrl: (path: string) => ipcRenderer.invoke("library:get-audio-url", path),
   readAudioFile: (path: string) => ipcRenderer.invoke("library:read-audio-file", path),
+  getAudioFileRevision: (path: string) =>
+    ipcRenderer.invoke("library:get-audio-file-revision", path),
   getWaveformCache: (request: WaveformCacheRequest) =>
     ipcRenderer.invoke("library:get-waveform-cache", request),
   saveWaveformCache: (write: WaveformCacheWrite) =>

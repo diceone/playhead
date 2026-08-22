@@ -1,3 +1,4 @@
+import type { Dirent, Stats } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { parseFile } from "music-metadata";
@@ -59,6 +60,7 @@ const ignoredFilePrefixes = [".", "._"];
 
 const maxVisitedDirectories = 5_000;
 const maxVisitedEntries = 75_000;
+const directoryReadConcurrency = 8;
 const metadataParseConcurrency = 4;
 
 type BuildTrackOptions = {
@@ -79,54 +81,57 @@ async function findAudioFiles(folderPath: string, extensions = audioExtensions):
   let visitedEntries = 0;
 
   while (pendingDirectories.length > 0) {
-    const currentDirectory = pendingDirectories.pop();
-    if (!currentDirectory) continue;
-
-    visitedDirectories += 1;
+    const directoryBatch = pendingDirectories.splice(-directoryReadConcurrency);
+    visitedDirectories += directoryBatch.length;
     if (visitedDirectories > maxVisitedDirectories) {
       throw new Error("That folder is too broad to scan. Choose a dedicated music folder instead.");
     }
 
-    let entries;
-    try {
-      entries = await readdir(currentDirectory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
+    const directoryEntries = await Promise.all(
+      directoryBatch.map(async (currentDirectory): Promise<[string, Dirent[]]> => {
+        try {
+          return [currentDirectory, await readdir(currentDirectory, { withFileTypes: true })];
+        } catch {
+          return [currentDirectory, []];
+        }
+      }),
+    );
 
-    for (const entry of entries) {
-      visitedEntries += 1;
-      if (visitedEntries > maxVisitedEntries) {
-        throw new Error(
-          "That folder contains too many files to scan safely. Choose a dedicated music folder instead.",
-        );
-      }
-
-      const entryPath = join(currentDirectory, entry.name);
-
-      if (entry.isDirectory()) {
-        if (blockedDirectoryNames.has(entry.name)) {
+    for (const [currentDirectory, entries] of directoryEntries) {
+      for (const entry of entries) {
+        visitedEntries += 1;
+        if (visitedEntries > maxVisitedEntries) {
           throw new Error(
-            "That looks like a code folder. Choose a dedicated music folder instead.",
+            "That folder contains too many files to scan safely. Choose a dedicated music folder instead.",
           );
         }
-        if (!ignoredDirectoryNames.has(entry.name)) pendingDirectories.push(entryPath);
-        continue;
-      }
 
-      if (entry.isFile() && blockedFileNames.has(entry.name)) {
-        throw new Error(
-          "That looks like a project folder. Choose a dedicated music folder instead.",
-        );
-      }
+        const entryPath = join(currentDirectory, entry.name);
 
-      // Skip hidden files, dotfiles, and macOS Apple Double resource-fork files (._*)
-      if (entry.isFile() && ignoredFilePrefixes.some((prefix) => entry.name.startsWith(prefix))) {
-        continue;
-      }
+        if (entry.isDirectory()) {
+          if (blockedDirectoryNames.has(entry.name)) {
+            throw new Error(
+              "That looks like a code folder. Choose a dedicated music folder instead.",
+            );
+          }
+          if (!ignoredDirectoryNames.has(entry.name)) pendingDirectories.push(entryPath);
+          continue;
+        }
 
-      if (entry.isFile() && extensions.has(extname(entry.name).toLowerCase())) {
-        audioFiles.push(entryPath);
+        if (entry.isFile() && blockedFileNames.has(entry.name)) {
+          throw new Error(
+            "That looks like a project folder. Choose a dedicated music folder instead.",
+          );
+        }
+
+        // Skip hidden files, dotfiles, and macOS Apple Double resource-fork files (._*)
+        if (entry.isFile() && ignoredFilePrefixes.some((prefix) => entry.name.startsWith(prefix))) {
+          continue;
+        }
+
+        if (entry.isFile() && extensions.has(extname(entry.name).toLowerCase())) {
+          audioFiles.push(entryPath);
+        }
       }
     }
   }
@@ -162,9 +167,20 @@ export async function buildTrack(
   options: BuildTrackOptions = {},
 ): Promise<LibraryTrack> {
   const fileName = basename(filePath);
+  const trackId = makeId(filePath);
+  let fileInfo: Stats | undefined;
 
   try {
-    const trackId = makeId(filePath);
+    fileInfo = await stat(filePath);
+    const existingTrack = options.existingTracks?.[trackId];
+    if (
+      existingTrack?.path === filePath &&
+      existingTrack.fileSize === fileInfo.size &&
+      Math.trunc(existingTrack.fileModifiedAt || 0) === Math.trunc(fileInfo.mtimeMs)
+    ) {
+      return existingTrack.folderId === folderId ? existingTrack : { ...existingTrack, folderId };
+    }
+
     const storedArtwork = options.reuseStoredArtwork
       ? (await getAvailableArtwork(options.existingTracks?.[trackId]?.artwork)) ||
         (await getStoredArtwork(trackId))
@@ -186,6 +202,8 @@ export async function buildTrack(
       id: trackId,
       path: filePath,
       fileName,
+      fileSize: fileInfo.size,
+      fileModifiedAt: fileInfo.mtimeMs,
       title: metadata.common.title || cleanTitle(filePath),
       artist: metadata.common.artist || "Unknown Artist",
       album: metadata.common.album,
@@ -205,9 +223,11 @@ export async function buildTrack(
     };
   } catch {
     return {
-      id: makeId(filePath),
+      id: trackId,
       path: filePath,
       fileName,
+      fileSize: fileInfo?.size,
+      fileModifiedAt: fileInfo?.mtimeMs,
       title: cleanTitle(filePath),
       artist: "Unknown Artist",
       duration: 0,

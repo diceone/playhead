@@ -8,7 +8,6 @@ import type {
   LibraryState,
   LibraryTrack,
   PlaylistExportRequest,
-  ScannedFolder,
   WaveformCacheRequest,
   WaveformCacheWrite,
   BpmCacheRequest,
@@ -28,7 +27,11 @@ import {
   writeLibraryState,
   writeLibraryTrackAnalysis,
 } from "./store";
-import { readWaveformCache, writeWaveformCache } from "./waveform-cache";
+import {
+  invalidateWaveformCacheIndex,
+  readWaveformCache,
+  writeWaveformCache,
+} from "./waveform-cache";
 import { readBpmCache, writeBpmCache } from "./bpm-cache";
 import {
   buildPlaylistExportContent,
@@ -39,6 +42,33 @@ import {
 } from "./playlist-export";
 
 const { app, dialog, ipcMain, protocol, shell } = electron;
+const folderScanConcurrency = 2;
+
+async function scanFolderPathsWithConcurrency(
+  folderPaths: string[],
+  extensions: string[] | undefined,
+  existingTracks: LibraryState["tracks"],
+): Promise<Awaited<ReturnType<typeof scanFolderPath>>[]> {
+  const scannedFolders = new Array<Awaited<ReturnType<typeof scanFolderPath>>>(folderPaths.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(folderScanConcurrency, folderPaths.length) },
+    async () => {
+      while (nextIndex < folderPaths.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        scannedFolders[index] = await scanFolderPath(
+          folderPaths[index],
+          extensions,
+          existingTracks,
+        );
+      }
+    },
+  );
+
+  await Promise.all(workers);
+  return scannedFolders;
+}
 
 function encodeMediaPath(filePath: string): string {
   return Buffer.from(filePath, "utf8").toString("base64url");
@@ -206,11 +236,7 @@ export function registerLibraryIpc(): void {
     if (result.canceled || result.filePaths.length === 0) return [];
 
     const existingState = await readLibraryState();
-    const scannedFolders: ScannedFolder[] = [];
-    for (const folderPath of result.filePaths) {
-      scannedFolders.push(await scanFolderPath(folderPath, extensions, existingState.tracks));
-    }
-    return scannedFolders;
+    return scanFolderPathsWithConcurrency(result.filePaths, extensions, existingState.tracks);
   });
 
   ipcMain.handle(
@@ -230,6 +256,26 @@ export function registerLibraryIpc(): void {
   );
 
   ipcMain.handle(
+    "library:scan-folders",
+    async (_event, folders: LibraryFolder[], extensions?: string[]) => {
+      const existingState = await readLibraryState();
+      return scanFolderPathsWithConcurrency(
+        folders.map((folder) => folder.path),
+        extensions,
+        existingState.tracks,
+      );
+    },
+  );
+
+  ipcMain.handle(
+    "library:scan-folder-paths",
+    async (_event, folderPaths: string[], extensions?: string[]) => {
+      const existingState = await readLibraryState();
+      return scanFolderPathsWithConcurrency(folderPaths, extensions, existingState.tracks);
+    },
+  );
+
+  ipcMain.handle(
     "library:watch-folders",
     async (_event, folders: LibraryFolder[], extensions?: string[]) => {
       await watchLibraryFolders(folders, extensions);
@@ -243,6 +289,11 @@ export function registerLibraryIpc(): void {
   ipcMain.handle("library:read-audio-file", async (_event, filePath: string) => {
     const bytes = await readFile(filePath);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  });
+
+  ipcMain.handle("library:get-audio-file-revision", async (_event, filePath: string) => {
+    const fileInfo = await stat(filePath);
+    return { size: fileInfo.size, mtimeMs: fileInfo.mtimeMs };
   });
 
   ipcMain.handle("library:get-waveform-cache", async (_event, request: WaveformCacheRequest) => {
@@ -289,7 +340,9 @@ export function registerLibraryIpc(): void {
   });
 
   ipcMain.handle("library:clear-waveform-cache", async () => {
-    await rm(join(app.getPath("userData"), "waveforms"), { recursive: true, force: true });
+    const directory = join(app.getPath("userData"), "waveforms");
+    invalidateWaveformCacheIndex(directory);
+    await rm(directory, { recursive: true, force: true });
   });
 
   ipcMain.handle("library:export-backup", async (_event, state: LibraryState) => {

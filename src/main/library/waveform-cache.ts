@@ -21,6 +21,15 @@ type WaveformCacheOptions = {
   maxBytes?: number;
 };
 
+type WaveformCacheFile = {
+  path: string;
+  size: number;
+  mtimeMs: number;
+};
+
+const cacheIndexes = new Map<string, Promise<Map<string, WaveformCacheFile>>>();
+const cacheWriteQueues = new Map<string, Promise<void>>();
+
 type WaveformCacheHeader = {
   version: number;
   size: number;
@@ -53,17 +62,17 @@ export function getWaveformCachePeakCount(duration: number): number {
   return getExpectedPeakCount(sanitizeDuration(duration));
 }
 
-export function encodeWaveformCache(
-  header: WaveformCacheHeader,
-  peaks: number[][],
-): Buffer {
+export function encodeWaveformCache(header: WaveformCacheHeader, peaks: number[][]): Buffer {
   const peakCount = getExpectedPeakCount(header.duration);
   const payload = Buffer.alloc(header.channels * peakCount);
 
   for (let channelIndex = 0; channelIndex < header.channels; channelIndex += 1) {
     const channel = peaks[channelIndex] || [];
     for (let peakIndex = 0; peakIndex < peakCount; peakIndex += 1) {
-      payload.writeInt8(quantizePeak(channel[peakIndex] ?? 0), channelIndex * peakCount + peakIndex);
+      payload.writeInt8(
+        quantizePeak(channel[peakIndex] ?? 0),
+        channelIndex * peakCount + peakIndex,
+      );
     }
   }
 
@@ -146,6 +155,11 @@ export async function readWaveformCache(
 
     const now = new Date();
     await utimes(filePath, now, now);
+    const cachedIndex = cacheIndexes.get(options.directory);
+    if (cachedIndex) {
+      const indexedFile = (await cachedIndex).get(filePath);
+      if (indexedFile) indexedFile.mtimeMs = now.getTime();
+    }
     return decoded.entry;
   } catch {
     return null;
@@ -171,37 +185,104 @@ export async function writeWaveformCache(
     peakCount: getExpectedPeakCount(duration),
   };
 
-  await mkdir(options.directory, { recursive: true });
-  await writeFile(cachePath(options.directory, write.trackId), encodeWaveformCache(header, write.peaks));
-  await pruneWaveformCache(options);
+  const filePath = cachePath(options.directory, write.trackId);
+  const bytes = encodeWaveformCache(header, write.peaks);
+
+  const previousWrite = cacheWriteQueues.get(options.directory) || Promise.resolve();
+  const nextWrite = previousWrite.then(async () => {
+    const index = await getWaveformCacheIndex(options.directory);
+    await mkdir(options.directory, { recursive: true });
+    await writeFile(filePath, bytes);
+    index.set(filePath, { path: filePath, size: bytes.length, mtimeMs: Date.now() });
+    await pruneWaveformCacheIndex(index, options.maxBytes ?? waveformCacheMaxBytes);
+  });
+  cacheWriteQueues.set(
+    options.directory,
+    nextWrite.catch(() => undefined),
+  );
+
+  await nextWrite;
 }
 
-export async function pruneWaveformCache(options: WaveformCacheOptions): Promise<void> {
-  const maxBytes = options.maxBytes ?? waveformCacheMaxBytes;
+async function loadWaveformCacheIndex(directory: string): Promise<Map<string, WaveformCacheFile>> {
   let entries;
 
   try {
-    entries = await readdir(options.directory, { withFileTypes: true });
+    entries = await readdir(directory, { withFileTypes: true });
   } catch {
-    return;
+    return new Map();
   }
+
+  const files = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(waveformExtension))
+      .map(async (entry): Promise<WaveformCacheFile | null> => {
+        const path = join(directory, entry.name);
+        try {
+          const fileInfo = await stat(path);
+          return { path, size: fileInfo.size, mtimeMs: fileInfo.mtimeMs };
+        } catch {
+          return null;
+        }
+      }),
+  );
+
+  return new Map(
+    files
+      .filter((file): file is WaveformCacheFile => Boolean(file))
+      .map((file) => [file.path, file]),
+  );
+}
+
+function getWaveformCacheIndex(directory: string): Promise<Map<string, WaveformCacheFile>> {
+  const existing = cacheIndexes.get(directory);
+  if (existing) return existing;
+
+  const index = loadWaveformCacheIndex(directory);
+  cacheIndexes.set(directory, index);
+  return index;
+}
+
+async function pruneWaveformCacheIndex(
+  index: Map<string, WaveformCacheFile>,
+  maxBytes: number,
+): Promise<void> {
+  let totalSize = Array.from(index.values()).reduce((total, file) => total + file.size, 0);
+  if (totalSize <= maxBytes) return;
 
   const files = (
     await Promise.all(
-      entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith(waveformExtension))
-        .map(async (entry) => {
-          const path = join(options.directory, entry.name);
-          const fileInfo = await stat(path);
-          return { path, size: fileInfo.size, mtimeMs: fileInfo.mtimeMs };
-        }),
+      Array.from(index.values()).map(async (file): Promise<WaveformCacheFile | null> => {
+        try {
+          const fileInfo = await stat(file.path);
+          file.size = fileInfo.size;
+          file.mtimeMs = fileInfo.mtimeMs;
+          return file;
+        } catch {
+          index.delete(file.path);
+          return null;
+        }
+      }),
     )
-  ).sort((a, b) => a.mtimeMs - b.mtimeMs);
-  let totalSize = files.reduce((total, file) => total + file.size, 0);
+  )
+    .filter((file): file is WaveformCacheFile => Boolean(file))
+    .sort((a, b) => a.mtimeMs - b.mtimeMs);
+  totalSize = files.reduce((total, file) => total + file.size, 0);
 
   for (const file of files) {
     if (totalSize <= maxBytes) break;
     await rm(file.path, { force: true });
+    index.delete(file.path);
     totalSize -= file.size;
   }
+}
+
+export function invalidateWaveformCacheIndex(directory: string): void {
+  cacheIndexes.delete(directory);
+}
+
+export async function pruneWaveformCache(options: WaveformCacheOptions): Promise<void> {
+  invalidateWaveformCacheIndex(options.directory);
+  const index = await getWaveformCacheIndex(options.directory);
+  await pruneWaveformCacheIndex(index, options.maxBytes ?? waveformCacheMaxBytes);
 }

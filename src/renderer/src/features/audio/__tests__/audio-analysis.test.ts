@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWaveformCachePeaks,
+  estimateIntegratedLoudnessDb,
+  getLoudnessNormalizationGain,
   getWaveformAnalysisPeakCount,
   shouldAnalyzeTrackBpm,
 } from "../audio-analysis";
@@ -29,6 +31,24 @@ function createBuffer(samples: number[], sampleRate = 1): AudioBuffer {
   } as unknown as AudioBuffer;
 }
 
+function createSineBuffer({
+  frequency,
+  sampleRate,
+  duration,
+  amplitude = 1,
+}: {
+  frequency: number;
+  sampleRate: number;
+  duration: number;
+  amplitude?: number;
+}): AudioBuffer {
+  const samples = Array.from(
+    { length: sampleRate * duration },
+    (_, index) => amplitude * Math.sin((2 * Math.PI * frequency * index) / sampleRate),
+  );
+  return createBuffer(samples, sampleRate);
+}
+
 describe("shouldAnalyzeTrackBpm", () => {
   it("includes tracks without bpm", () => {
     expect(shouldAnalyzeTrackBpm(createTrack())).toBe(true);
@@ -41,6 +61,26 @@ describe("shouldAnalyzeTrackBpm", () => {
 
   it("allows analyzed bpm to be revalidated from cache", () => {
     expect(shouldAnalyzeTrackBpm(createTrack({ bpm: 128, bpmSource: "analysis" }))).toBe(true);
+  });
+});
+
+describe("volume normalization", () => {
+  it.each([16_000, 48_000])("matches the BS.1770 reference level at %i Hz", (sampleRate) => {
+    const loudnessDb = estimateIntegratedLoudnessDb(
+      createSineBuffer({ frequency: 997, sampleRate, duration: 1 }),
+    );
+    expect(loudnessDb).toBeCloseTo(-3.01, 1);
+  });
+
+  it("attenuates toward -18 dB without boosting quiet tracks", () => {
+    expect(getLoudnessNormalizationGain(-20)).toBe(1);
+    expect(getLoudnessNormalizationGain(-8)).toBeCloseTo(10 ** (-10 / 20), 5);
+    expect(getLoudnessNormalizationGain(-40)).toBe(1);
+    expect(getLoudnessNormalizationGain(4)).toBeCloseTo(10 ** (-12 / 20), 5);
+  });
+
+  it("ignores silence", () => {
+    expect(estimateIntegratedLoudnessDb(createBuffer([0, 0, 0], 3))).toBeNull();
   });
 });
 

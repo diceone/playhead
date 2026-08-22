@@ -172,6 +172,7 @@ export function SettingsDialog({
   const playbackSettingsChanged =
     savedPlaybackSettings.seekStepSeconds !== draftPlaybackSettings.seekStepSeconds ||
     savedPlaybackSettings.volumeStepPercent !== draftPlaybackSettings.volumeStepPercent ||
+    savedPlaybackSettings.normalizeVolume !== draftPlaybackSettings.normalizeVolume ||
     savedPlaybackSettings.rememberTrackPositions !== draftPlaybackSettings.rememberTrackPositions ||
     savedPlaybackSettings.restoreLastSession !== draftPlaybackSettings.restoreLastSession ||
     savedPlaybackSettings.skipUnavailableTracks !== draftPlaybackSettings.skipUnavailableTracks;

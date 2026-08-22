@@ -31,17 +31,31 @@ const ignoredDirectoryNames = new Set([
 let watcher: FSWatcher | null = null;
 let watchedFolders: LibraryFolder[] = [];
 let watchedExtensions = audioExtensions;
+let watcherSignature = "";
 const pendingNotifications = new Map<string, NodeJS.Timeout>();
+
+function getWatcherSignature(folders: LibraryFolder[], extensions: Set<string>): string {
+  return JSON.stringify({
+    folders: folders
+      .map((folder) => [folder.id, folder.path])
+      .sort(([left], [right]) => left.localeCompare(right)),
+    extensions: Array.from(extensions).sort(),
+  });
+}
 
 export async function watchLibraryFolders(
   folders: LibraryFolder[],
   extensions?: string[],
 ): Promise<void> {
-  watchedFolders = folders;
-  watchedExtensions =
+  const nextExtensions =
     extensions && extensions.length > 0
       ? new Set(extensions.map((extension) => extension.toLowerCase()))
       : audioExtensions;
+  const nextSignature = getWatcherSignature(folders, nextExtensions);
+  watchedFolders = folders;
+  watchedExtensions = nextExtensions;
+
+  if (watcher && watcherSignature === nextSignature) return;
 
   if (watcher) {
     await watcher.close();
@@ -51,7 +65,12 @@ export async function watchLibraryFolders(
   for (const timeout of pendingNotifications.values()) clearTimeout(timeout);
   pendingNotifications.clear();
 
-  if (folders.length === 0) return;
+  if (folders.length === 0) {
+    watcherSignature = "";
+    return;
+  }
+
+  watcherSignature = nextSignature;
 
   watcher = chokidar.watch(
     folders.map((folder) => folder.path),
@@ -63,7 +82,10 @@ export async function watchLibraryFolders(
       ignoreInitial: true,
       ignored: (filePath, stats) => {
         const fileName = filePath.split(/[\\/]/).pop() || "";
-        if (stats?.isDirectory() && ignoredDirectoryNames.has(fileName)) {
+        if (
+          stats?.isDirectory() &&
+          ignoredDirectoryNames.has(fileName)
+        ) {
           return true;
         }
 
@@ -85,9 +107,13 @@ export async function watchLibraryFolders(
 }
 
 export async function closeFolderWatcher(): Promise<void> {
-  if (!watcher) return;
-  await watcher.close();
+  if (watcher) await watcher.close();
   watcher = null;
+  watcherSignature = "";
+  watchedFolders = [];
+
+  for (const timeout of pendingNotifications.values()) clearTimeout(timeout);
+  pendingNotifications.clear();
 }
 
 function notifyFolderForPath(filePath: string) {

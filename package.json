@@ -1,7 +1,7 @@
 {
   "name": "playhead",
   "productName": "Playhead",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Local-first desktop music player prototype with waveform playback.",
   "author": "Edin",
   "license": "MIT",
@@ -149,7 +149,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "^5.1.2",
-    "electron": "latest",
+    "electron": "^42.1.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "latest",
     "eslint": "^10.3.0",
