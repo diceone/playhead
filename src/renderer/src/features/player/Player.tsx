@@ -234,37 +234,41 @@ export function Player({
       </div>
 
       <div className="relative mt-4 flex flex-col">
-        <div className="relative h-[74px] overflow-hidden rounded-[20px]">
-          <motion.div className="absolute inset-0 overflow-hidden rounded-[2px]">
-            <motion.div
-              className="h-full origin-left"
-              animate={{
-                clipPath: hasWaveform ? "inset(0% 0% 0% 0%)" : "inset(0% 100% 0% 0%)",
-                opacity: hasWaveform ? 1 : 0,
-              }}
-              transition={{
-                clipPath: {
-                  duration: reduceMotion || !shouldAnimateWaveform ? 0 : 0.55,
-                  ease: [0.22, 1, 0.36, 1],
-                },
-                opacity: {
-                  duration: reduceMotion || !shouldAnimateWaveform ? 0 : hasWaveform ? 0.08 : 0.18,
-                },
-              }}
-            >
-              <div ref={waveformRef} className="no-drag h-full w-full rounded-[2px]" />
+        <div className="overflow-hidden rounded-[20px] border border-white/5 bg-white/[0.015]">
+          <div className="relative h-[74px] overflow-hidden">
+            <motion.div className="absolute inset-0 overflow-hidden rounded-[2px]">
+              <motion.div
+                className="h-full origin-left"
+                animate={{
+                  clipPath: hasWaveform ? "inset(0% 0% 0% 0%)" : "inset(0% 100% 0% 0%)",
+                  opacity: hasWaveform ? 1 : 0,
+                }}
+                transition={{
+                  clipPath: {
+                    duration: reduceMotion || !shouldAnimateWaveform ? 0 : 0.55,
+                    ease: [0.22, 1, 0.36, 1],
+                  },
+                  opacity: {
+                    duration: reduceMotion || !shouldAnimateWaveform ? 0 : hasWaveform ? 0.08 : 0.18,
+                  },
+                }}
+              >
+                <div ref={waveformRef} className="no-drag h-full w-full rounded-[2px]" />
+              </motion.div>
             </motion.div>
-          </motion.div>
 
-          <AnimatePresence mode="wait">
-            {!hasWaveform && (
-              <WaveformEmptyState
-                key={activeTrack ? "loading-waveform" : "empty-waveform"}
-                isLoading={(isLoading && shouldAnimateWaveform) || !activeTrack}
-                reduceMotion={reduceMotion}
-              />
-            )}
-          </AnimatePresence>
+            <AnimatePresence mode="wait">
+              {!hasWaveform && (
+                <WaveformEmptyState
+                  key={activeTrack ? "loading-waveform" : "empty-waveform"}
+                  isLoading={(isLoading && shouldAnimateWaveform) || !activeTrack}
+                  reduceMotion={reduceMotion}
+                />
+              )}
+            </AnimatePresence>
+          </div>
+          {/* Minimap container — WaveSurfer MinimapPlugin inserts here */}
+          <div id="waveform-minimap" className="min-h-[20px] border-t border-white/5" />
         </div>
         <div className="flex items-center justify-between pt-1 text-[10px] font-medium leading-none tabular-nums text-muted-foreground">
           <span>{formatTime(currentTime)}</span>

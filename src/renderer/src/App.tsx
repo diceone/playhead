@@ -3,6 +3,7 @@ import { AnimatePresence, MotionConfig } from "framer-motion";
 import Hls from "hls.js";
 import WaveSurfer, { type WaveSurferOptions } from "wavesurfer.js";
 import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.js";
+import MinimapPlugin from "wavesurfer.js/dist/plugins/minimap.js";
 import {
   type AppearanceSettings,
   type AppUpdateState,
@@ -405,6 +406,7 @@ export function App() {
   const topGapWindowDragHandlers = useWindowDrag<HTMLDivElement>();
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const regionsRef = useRef<RegionsPlugin | null>(null);
+  const minimapRef = useRef<MinimapPlugin | null>(null);
   const loopRegionRef = useRef<import("wavesurfer.js/dist/plugins/regions.js").Region | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const playNextTrackOnEndRef = useRef<() => boolean>(() => false);
@@ -2983,6 +2985,15 @@ export function App() {
 
     const styles = getComputedStyle(document.documentElement);
     const regions = RegionsPlugin.create();
+    const minimap = MinimapPlugin.create({
+      height: 20,
+      overlayColor: "rgba(255, 255, 0, 0.1)",
+      waveColor: "rgba(255, 255, 255, 0.12)",
+      progressColor: "rgba(255, 255, 255, 0.35)",
+      cursorColor: "rgba(255, 255, 0, 0.4)",
+      cursorWidth: 1,
+      container: "#waveform-minimap",
+    });
     const wavesurfer = WaveSurfer.create({
       container: waveformElement,
       height: "auto",
@@ -2995,10 +3006,11 @@ export function App() {
       normalize: true,
       dragToSeek: true,
       sampleRate: 16000,
-      plugins: [regions],
+      plugins: [regions, minimap],
     });
     wavesurferRef.current = wavesurfer;
     regionsRef.current = regions;
+    minimapRef.current = minimap;
     volumeControllerRef.current?.setBaseVolume(volumeRef.current);
     setIsWaveformEngineReady(true);
     const unsubscribers = [
@@ -3084,6 +3096,8 @@ export function App() {
     return () => {
       destroyHls();
       unsubscribers.forEach((unsubscribe) => unsubscribe());
+      minimap.destroy();
+      minimapRef.current = null;
       regions.destroy();
       regionsRef.current = null;
       wavesurfer.destroy();
