@@ -96,6 +96,10 @@ describe("library store settings", () => {
         source: null,
         panelOpen: false,
       },
+      loopActive: false,
+      loopStart: 0,
+      loopEnd: 0,
+      loopBeats: 4,
     });
   });
 

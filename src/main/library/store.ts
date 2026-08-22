@@ -5,6 +5,7 @@ import {
   defaultLibrarySettings,
   emptyLibraryState,
   type AppSettings,
+  type CuePoint,
   type LibrarySettings,
   type LibraryState,
   type SelectedSource,
@@ -148,6 +149,27 @@ export async function writeLibrarySelectedSource(
     const current = await loadLibraryState();
     const nextState = { ...current, selectedSource };
     await writeLibraryRuntimeState(nextState);
+    cacheLibraryState(nextState);
+    return nextState;
+  });
+}
+
+export async function writeLibraryCuePoints(
+  trackId: string,
+  cuePoints: CuePoint[],
+): Promise<LibraryState> {
+  return enqueueOperation(async () => {
+    const current = await loadLibraryState();
+    const track = current.tracks[trackId];
+    if (!track) return current;
+    const nextState = {
+      ...current,
+      tracks: {
+        ...current.tracks,
+        [trackId]: { ...track, cuePoints },
+      },
+    };
+    await writeLibraryStateFile(nextState);
     cacheLibraryState(nextState);
     return nextState;
   });

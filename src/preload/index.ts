@@ -27,6 +27,8 @@ const api: PlayheadApi = {
     ipcRenderer.invoke("library:save-session-settings", session),
   saveLibraryTrackAnalysis: (trackId, bpm) =>
     ipcRenderer.invoke("library:save-track-analysis", trackId, bpm),
+  saveLibraryCuePoints: (trackId, cuePoints) =>
+    ipcRenderer.invoke("library:save-cue-points", trackId, cuePoints),
   saveLibrarySelectedSource: (selectedSource) =>
     ipcRenderer.invoke("library:save-selected-source", selectedSource),
   selectMusicFolder: (extensions?: string[]) =>

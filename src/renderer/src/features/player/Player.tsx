@@ -1,4 +1,4 @@
-import type { LibraryTag, LibraryTrack, PitchMode } from "../../../../shared/library";
+import type { CuePoint, LibraryTag, LibraryTrack, PitchMode } from "../../../../shared/library";
 import { AnimatePresence, motion } from "framer-motion";
 import { SliderComfortable } from "@/components/ui/slider";
 import { formatTime } from "@/lib/format";
@@ -58,6 +58,16 @@ export function Player({
   onVolumeChange,
   onPitchChange,
   onCyclePitchMode,
+  loopActive,
+  loopBeats,
+  onToggleLoop,
+  onSetLoopBeats,
+  cuePoints,
+  onSetCuePoint,
+  onJumpToCuePoint,
+  onClearCuePoint,
+  zoomLevel,
+  onZoomChange,
 }: {
   activeTrack: LibraryTrack | null;
   activeTags: LibraryTag[];
@@ -85,6 +95,16 @@ export function Player({
   onVolumeChange: (volume: number) => void;
   onPitchChange: (percent: number) => void;
   onCyclePitchMode: () => void;
+  loopActive: boolean;
+  loopBeats: number;
+  onToggleLoop: () => void;
+  onSetLoopBeats: (beats: number) => void;
+  cuePoints: CuePoint[];
+  onSetCuePoint: (index: number) => void;
+  onJumpToCuePoint: (index: number) => void;
+  onClearCuePoint: (index: number) => void;
+  zoomLevel: number;
+  onZoomChange: (direction: "in" | "out") => void;
 }) {
   const windowDragHandlers = useWindowDrag<HTMLDivElement>();
   const icons = useIcons();
@@ -248,6 +268,30 @@ export function Player({
         </div>
         <div className="flex items-center justify-between pt-1 text-[10px] font-medium leading-none tabular-nums text-muted-foreground">
           <span>{formatTime(currentTime)}</span>
+          <div className="no-drag flex items-center gap-1">
+            <button
+              type="button"
+              className="grid h-5 w-5 place-items-center rounded border border-white/10 bg-white/[0.045] text-muted-foreground transition hover:bg-white/[0.12] hover:text-foreground disabled:opacity-30"
+              title="Zoom out"
+              disabled={zoomLevel <= 0}
+              onClick={() => onZoomChange("out")}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M2 5h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="grid h-5 w-5 place-items-center rounded border border-white/10 bg-white/[0.045] text-muted-foreground transition hover:bg-white/[0.12] hover:text-foreground disabled:opacity-30"
+              title="Zoom in"
+              disabled={zoomLevel >= 8}
+              onClick={() => onZoomChange("in")}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M2 5h6M5 2v6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
+          </div>
           <span>{formatTime(duration)}</span>
         </div>
       </div>
@@ -294,6 +338,81 @@ export function Player({
           </svg>
           <span>{isKeyLocked ? "LOCK" : "VINYL"}</span>
         </button>
+      </div>
+
+      {/* Loop + Cue control row */}
+      <div className="no-drag flex items-center gap-2 py-0.5">
+        {/* Loop */}
+        <button
+          type="button"
+          className={`grid h-7 shrink-0 place-items-center rounded-full border px-3 text-[10px] font-bold leading-none transition ${
+            loopActive
+              ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-300"
+              : "border-white/10 bg-white/[0.045] text-muted-foreground"
+          } hover:bg-white/[0.1]`}
+          title="Toggle loop (Shift+L)"
+          onClick={onToggleLoop}
+        >
+          LOOP
+        </button>
+        {[1, 2, 4, 8, 16, 32].map((beats) => (
+          <button
+            key={beats}
+            type="button"
+            className={`grid h-7 shrink-0 place-items-center rounded-full border px-2 text-[10px] font-semibold leading-none transition ${
+              loopBeats === beats
+                ? "border-white/30 bg-white/[0.12] text-foreground"
+                : "border-white/10 bg-white/[0.045] text-muted-foreground"
+            } hover:bg-white/[0.1]`}
+            title={`${beats} beat${beats !== 1 ? "s" : ""}`}
+            onClick={() => onSetLoopBeats(beats)}
+          >
+            {beats}
+          </button>
+        ))}
+
+        {/* Divider */}
+        <div className="mx-1 h-5 w-px shrink-0 bg-white/10" />
+
+        {/* Cue Points */}
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((index) => {
+          const cue = cuePoints.find((c) => c.id === `cue-${index}`);
+          const hasCue = Boolean(cue);
+          const mins = Math.floor((cue?.position ?? 0) / 60);
+          const secs = ((cue?.position ?? 0) % 60).toFixed(1);
+          const timeLabel = `${mins}:${secs.padStart(4, "0")}`;
+          return (
+            <button
+              key={index}
+              type="button"
+              className={`relative grid h-7 w-7 shrink-0 place-items-center rounded-full border text-[10px] font-bold leading-none transition hover:bg-white/[0.12] ${
+                hasCue
+                  ? "border-yellow-400/50 bg-yellow-400/20 text-yellow-300 shadow-[0_0_6px_rgba(250,204,21,0.25)]"
+                  : "border-white/10 bg-white/[0.045] text-muted-foreground hover:text-foreground"
+              }`}
+              title={
+                hasCue
+                  ? `Cue ${index + 1} — ${timeLabel}
+Click: jump to cue
+Right-click: delete cue`
+                  : `Cue ${index + 1} — Click to set at current position`
+              }
+              onClick={() => {
+                if (hasCue) {
+                  onJumpToCuePoint(index);
+                } else {
+                  onSetCuePoint(index);
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (hasCue) onClearCuePoint(index);
+              }}
+            >
+              {index + 1}
+            </button>
+          );
+        })}
       </div>
 
       <div className="grid grid-cols-[1fr_auto_1fr] items-center py-1">

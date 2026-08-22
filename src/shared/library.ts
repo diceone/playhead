@@ -40,6 +40,12 @@ export type LibraryFolder = {
   trackIds: string[];
 };
 
+export type CuePoint = {
+  id: string;
+  position: number;
+  label?: string;
+};
+
 export type LibraryTrack = {
   id: string;
   source?: TrackSource;
@@ -62,6 +68,7 @@ export type LibraryTrack = {
   bitRate?: number;
   bpm?: number;
   bpmSource?: "metadata" | "analysis";
+  cuePoints?: CuePoint[];
   folderId: string;
   soundcloud?: {
     id: number;
@@ -264,6 +271,10 @@ export type SessionSettings = {
   repeatMode: "off" | "all" | "one";
   sidebarGroupOrder: SidebarGroupId[];
   queue: PlaybackQueue;
+  loopActive: boolean;
+  loopStart: number;
+  loopEnd: number;
+  loopBeats: number;
 };
 
 export type ScannedFolder = {
@@ -353,6 +364,7 @@ export type PlayheadApi = {
   saveLibraryState: (state: LibraryState) => Promise<LibraryState>;
   saveLibrarySessionSettings: (session: SessionSettings) => Promise<LibraryState>;
   saveLibraryTrackAnalysis: (trackId: string, bpm: number) => Promise<LibraryState>;
+  saveLibraryCuePoints: (trackId: string, cuePoints: CuePoint[]) => Promise<LibraryState>;
   saveLibrarySelectedSource: (selectedSource: SelectedSource | null) => Promise<LibraryState>;
   selectMusicFolder: (extensions?: string[]) => Promise<ScannedFolder[]>;
   scanFolder: (folder: LibraryFolder, extensions?: string[]) => Promise<ScannedFolder>;
@@ -492,6 +504,10 @@ export const defaultSessionSettings = (): SessionSettings => ({
     source: null,
     panelOpen: false,
   },
+  loopActive: false,
+  loopStart: 0,
+  loopEnd: 0,
+  loopBeats: 4,
 });
 
 export const defaultAppSettings = (): AppSettings => ({

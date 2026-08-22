@@ -4,6 +4,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import type {
   EditableTrackMetadata,
+  CuePoint,
   LibraryFolder,
   LibraryState,
   LibraryTrack,
@@ -22,6 +23,7 @@ import { scanFolderPath } from "./scanner";
 import {
   normalizeLibraryState,
   readLibraryState,
+  writeLibraryCuePoints,
   writeLibrarySelectedSource,
   writeLibrarySessionSettings,
   writeLibraryState,
@@ -219,6 +221,13 @@ export function registerLibraryIpc(): void {
   ipcMain.handle("library:save-track-analysis", async (_event, trackId: string, bpm: number) => {
     return writeLibraryTrackAnalysis(trackId, bpm);
   });
+
+  ipcMain.handle(
+    "library:save-cue-points",
+    async (_event, trackId: string, cuePoints: CuePoint[]) => {
+      return writeLibraryCuePoints(trackId, cuePoints);
+    },
+  );
 
   ipcMain.handle(
     "library:save-selected-source",

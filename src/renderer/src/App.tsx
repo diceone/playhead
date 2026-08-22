@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig } from "framer-motion";
 import Hls from "hls.js";
 import WaveSurfer, { type WaveSurferOptions } from "wavesurfer.js";
+import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.js";
 import {
   type AppearanceSettings,
   type AppUpdateState,
@@ -16,6 +17,7 @@ import {
   type LibraryState,
   type LibraryTag,
   type LibraryTrack,
+  type CuePoint,
   type PlaybackSettings,
   type PitchMode,
   type PlaylistExportFormat,
@@ -402,6 +404,8 @@ function dismissUpdateMessage(version: string): void {
 export function App() {
   const topGapWindowDragHandlers = useWindowDrag<HTMLDivElement>();
   const wavesurferRef = useRef<WaveSurfer | null>(null);
+  const regionsRef = useRef<RegionsPlugin | null>(null);
+  const loopRegionRef = useRef<import("wavesurfer.js/dist/plugins/regions.js").Region | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const playNextTrackOnEndRef = useRef<() => boolean>(() => false);
   const playAdjacentTrackRef = useRef<() => void>(() => {});
@@ -462,6 +466,10 @@ export function App() {
   const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("off");
   const [pitchPercent, setPitchPercent] = useState(0);
+  const [loopActive, setLoopActive] = useState(false);
+  const [loopBeats, setLoopBeats] = useState(4);
+  const [zoomLevel, setZoomLevel] = useState(0);
+  const [cuePoints, setCuePoints] = useState<CuePoint[]>([]);
   const [pitchMode, setPitchMode] = useState<PitchMode>("key-lock");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1240,6 +1248,17 @@ export function App() {
         lastfmNowPlayingTrackIdRef.current = null;
         setHasWaveform(remoteTrack ? remoteHasWaveform : true);
         setDuration(wavesurfer.getDuration() || track.duration || 0);
+
+        // Load cue points for this track
+        const trackCues = track.cuePoints || [];
+        setCuePoints(trackCues);
+        // Reset loop when switching tracks
+        if (loopRegionRef.current) {
+          loopRegionRef.current = null;
+          setLoopActive(false);
+        }
+        // Render cue points after waveform is ready
+        setTimeout(() => renderCuePointRegions(trackCues), 100);
         if (!cachedWaveform && !remoteTrack) {
           const loadedDuration = wavesurfer.getDuration() || track.duration || 0;
           const maxLength = Math.max(
@@ -2217,6 +2236,197 @@ export function App() {
     setCurrentTime(wavesurfer.getCurrentTime());
   }, []);
 
+  // --- Cue Points ---
+
+  const renderCuePointRegions = useCallback((cues: CuePoint[]) => {
+    const regions = regionsRef.current;
+    if (!regions) return;
+    regions.clearRegions();
+    for (const cue of cues) {
+      regions.addRegion({
+        id: `cue-${cue.id}`,
+        start: cue.position,
+        end: cue.position + 0.001,
+        color: "rgba(255, 255, 0, 0.35)",
+        content: cue.label || "",
+        drag: false,
+        resize: false,
+      });
+    }
+  }, []);
+
+  const setCuePoint = useCallback(
+    (index: number) => {
+      const wavesurfer = wavesurferRef.current;
+      if (!wavesurfer || !activeTrackId) return;
+      const trackId = activeTrackId;
+
+      const position = wavesurfer.getCurrentTime();
+      const cueId = `cue-${index}`;
+
+      // Use local cuePoints state (not library state) so newly set cues are immediately available
+      const existingCues = cuePoints;
+
+      // Toggle off if already set at this position (within 0.5s)
+      const existing = existingCues.find((c) => c.id === cueId);
+      if (existing && Math.abs(existing.position - position) < 0.5) {
+        const next = existingCues.filter((c) => c.id !== cueId);
+        setCuePoints(next);
+        renderCuePointRegions(next);
+        void window.playhead.saveLibraryCuePoints(trackId, next);
+        return;
+      }
+
+      // Set or overwrite cue at this slot
+      const next = existingCues.filter((c) => c.id !== cueId);
+      next.push({ id: cueId, position, label: String(index + 1) });
+      next.sort((a, b) => a.position - b.position);
+      setCuePoints(next);
+      renderCuePointRegions(next);
+      void window.playhead.saveLibraryCuePoints(trackId, next);
+    },
+    [activeTrackId, cuePoints, renderCuePointRegions],
+  );
+
+  const jumpToCuePoint = useCallback(
+    (index: number) => {
+      const wavesurfer = wavesurferRef.current;
+      if (!wavesurfer || !activeTrackId) return;
+      const cueId = `cue-${index}`;
+      const cue = cuePoints.find((c) => c.id === cueId);
+      if (cue) {
+        wavesurfer.setTime(cue.position);
+        setCurrentTime(cue.position);
+      }
+    },
+    [activeTrackId, cuePoints],
+  );
+
+  const clearCuePoint = useCallback(
+    (index: number) => {
+      if (!activeTrackId) return;
+      const cueId = `cue-${index}`;
+      const next = cuePoints.filter((c) => c.id !== cueId);
+      setCuePoints(next);
+      renderCuePointRegions(next);
+      void window.playhead.saveLibraryCuePoints(activeTrackId, next);
+    },
+    [activeTrackId, cuePoints, renderCuePointRegions],
+  );
+
+  // --- Loop ---
+
+  const toggleLoop = useCallback(() => {
+    const wavesurfer = wavesurferRef.current;
+    const regions = regionsRef.current;
+    if (!wavesurfer || !regions) return;
+
+    setLoopActive((prev) => {
+      const next = !prev;
+      if (!next) {
+        // Disable loop
+        loopRegionRef.current = null;
+        regions.clearRegions();
+        // Re-render cue points
+        renderCuePointRegions(cuePoints);
+        return false;
+      }
+
+      // Enable loop: create a loop region based on BPM and current position
+      const currentTime = wavesurfer.getCurrentTime();
+      const track = activeTrackId ? allPlayableTracksById[activeTrackId] : null;
+      const bpm = track?.bpm || 128;
+      const beatsPerSecond = bpm / 60;
+      const loopLength = loopBeats / beatsPerSecond;
+      const loopStart = currentTime;
+      const loopEnd = Math.min(loopStart + loopLength, wavesurfer.getDuration() || loopStart + loopLength);
+
+      // Remove any existing loop region and re-add cue points
+      regions.clearRegions();
+      renderCuePointRegions(cuePoints);
+
+      const region = regions.addRegion({
+        id: "loop-region",
+        start: loopStart,
+        end: loopEnd,
+        color: "rgba(0, 200, 255, 0.18)",
+        content: `${loopBeats} beat${loopBeats !== 1 ? "s" : ""}`,
+        drag: true,
+        resize: true,
+      });
+      loopRegionRef.current = region;
+
+      region.on("update-end", () => {
+        loopRegionRef.current = region;
+      });
+
+      return true;
+    });
+  }, [activeTrackId, allPlayableTracksById, cuePoints, loopBeats, renderCuePointRegions]);
+
+  const setLoopBeatsAmount = useCallback((beats: number) => {
+    setLoopBeats(beats);
+    // If loop is active, update the loop region
+    if (loopActive && loopRegionRef.current) {
+      const wavesurfer = wavesurferRef.current;
+      const track = activeTrackId ? allPlayableTracksById[activeTrackId] : null;
+      const bpm = track?.bpm || 128;
+      const beatsPerSecond = bpm / 60;
+      const loopLength = beats / beatsPerSecond;
+      const loopStart = loopRegionRef.current.start;
+      const loopEnd = Math.min(loopStart + loopLength, wavesurfer?.getDuration() || loopStart + loopLength);
+      loopRegionRef.current.setOptions({ start: loopStart, end: loopEnd, content: `${beats} beat${beats !== 1 ? "s" : ""}` });
+    }
+  }, [loopActive, activeTrackId, allPlayableTracksById]);
+
+  const zoomWaveform = useCallback((direction: "in" | "out") => {
+    const wavesurfer = wavesurferRef.current;
+    const regions = regionsRef.current;
+    if (!wavesurfer) return;
+    setZoomLevel((current) => {
+      // Zoom levels: 0 = default (fill), 1-8 = increasing zoom
+      const next = direction === "in"
+        ? Math.min(8, current + 1)
+        : Math.max(0, current - 1);
+      if (next === current) return current;
+      // minPxPerSec values: 0 = fill parent, then exponential scale
+      const pxPerSec = next === 0 ? 0 : Math.pow(2, next) * 20;
+      wavesurfer.zoom(pxPerSec);
+
+      // Re-render regions after zoom — wavesurfer.zoom() clears the waveform
+      // and regions need to be re-added
+      if (regions) {
+        // Capture current loop region bounds before clearing
+        const currentLoop = loopRegionRef.current;
+        const loopStart = currentLoop?.start ?? 0;
+        const loopEnd = currentLoop?.end ?? 0;
+        const hasLoop = Boolean(currentLoop) && loopActive;
+
+        // Clear and re-add cue points + loop region
+        regions.clearRegions();
+        renderCuePointRegions(cuePoints);
+
+        if (hasLoop) {
+          const region = regions.addRegion({
+            id: "loop-region",
+            start: loopStart,
+            end: loopEnd,
+            color: "rgba(0, 200, 255, 0.18)",
+            content: `${loopBeats} beat${loopBeats !== 1 ? "s" : ""}`,
+            drag: true,
+            resize: true,
+          });
+          loopRegionRef.current = region;
+          region.on("update-end", () => {
+            loopRegionRef.current = region;
+          });
+        }
+      }
+
+      return next;
+    });
+  }, [cuePoints, loopActive, loopBeats, renderCuePointRegions]);
+
   const changeVolumeBy = useCallback(
     (offset: number) => {
       setPlayerVolume((volumeControllerRef.current?.getBaseVolume() ?? volumeRef.current) + offset);
@@ -2612,6 +2822,7 @@ export function App() {
       setRepeatMode(nextState.settings.session.repeatMode);
       setPitchPercent(nextState.settings.playback.pitchPercent ?? 0);
       setPitchMode(nextState.settings.playback.pitchMode ?? "key-lock");
+      setLoopBeats(nextState.settings.session.loopBeats ?? 4);
       void window.playhead.watchLibraryFolders(
         nextState.settings.library.watchFolders ? nextState.folders : [],
         nextState.settings.library.enabledAudioExtensions,
@@ -2771,6 +2982,7 @@ export function App() {
     if (!waveformElement || wavesurferRef.current) return;
 
     const styles = getComputedStyle(document.documentElement);
+    const regions = RegionsPlugin.create();
     const wavesurfer = WaveSurfer.create({
       container: waveformElement,
       height: "auto",
@@ -2783,8 +2995,10 @@ export function App() {
       normalize: true,
       dragToSeek: true,
       sampleRate: 16000,
+      plugins: [regions],
     });
     wavesurferRef.current = wavesurfer;
+    regionsRef.current = regions;
     volumeControllerRef.current?.setBaseVolume(volumeRef.current);
     setIsWaveformEngineReady(true);
     const unsubscribers = [
@@ -2794,6 +3008,16 @@ export function App() {
       }),
       wavesurfer.on("timeupdate", (time) => {
         setCurrentTime(time);
+
+        // Loop: jump back to loop start when reaching loop end
+        if (loopRegionRef.current && loopRegionRef.current.start < loopRegionRef.current.end) {
+          const loopEnd = loopRegionRef.current.end;
+          if (time >= loopEnd && time < loopEnd + 0.3) {
+            wavesurfer.setTime(loopRegionRef.current.start);
+            return;
+          }
+        }
+
         const trackId = activeTrackIdRef.current;
         if (trackId && Date.now() - lastPositionSaveRef.current >= 5000) {
           lastPositionSaveRef.current = Date.now();
@@ -2860,6 +3084,8 @@ export function App() {
     return () => {
       destroyHls();
       unsubscribers.forEach((unsubscribe) => unsubscribe());
+      regions.destroy();
+      regionsRef.current = null;
       wavesurfer.destroy();
       wavesurferRef.current = null;
       setIsWaveformEngineReady(false);
@@ -2888,6 +3114,9 @@ export function App() {
     onPlaySelectedTrack: playSelectedTrack,
     onToggleSelectedTrackFavorite: toggleSelectedTrackFavorite,
     onPitchChange: (delta) => setPlayerPitch(pitchPercent + delta),
+    onToggleLoop: toggleLoop,
+    onSetCuePoint: setCuePoint,
+    onJumpToCuePoint: jumpToCuePoint,
   });
 
   useEffect(() => {
@@ -3162,6 +3391,16 @@ export function App() {
                   pitchMode={pitchMode}
                   onPitchChange={setPlayerPitch}
                   onCyclePitchMode={cyclePitchMode}
+                  loopActive={loopActive}
+                  loopBeats={loopBeats}
+                  onToggleLoop={toggleLoop}
+                  onSetLoopBeats={setLoopBeatsAmount}
+                  cuePoints={cuePoints}
+                  onSetCuePoint={setCuePoint}
+                  onJumpToCuePoint={jumpToCuePoint}
+                  onClearCuePoint={clearCuePoint}
+                  zoomLevel={zoomLevel}
+                  onZoomChange={zoomWaveform}
                 />
 
                 {activeTrack && (

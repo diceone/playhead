@@ -15,6 +15,9 @@ export function usePlayerKeyboardShortcuts({
   onPlaySelectedTrack,
   onToggleSelectedTrackFavorite,
   onPitchChange,
+  onToggleLoop,
+  onSetCuePoint,
+  onJumpToCuePoint,
 }: {
   playbackSettings: PlaybackSettings;
   onToggleQueue: () => void;
@@ -27,6 +30,9 @@ export function usePlayerKeyboardShortcuts({
   onPlaySelectedTrack: () => void;
   onToggleSelectedTrackFavorite: () => void;
   onPitchChange: (delta: number) => void;
+  onToggleLoop: () => void;
+  onSetCuePoint: (index: number) => void;
+  onJumpToCuePoint: (index: number) => void;
 }) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -120,6 +126,24 @@ export function usePlayerKeyboardShortcuts({
         return;
       }
 
+      // Loop toggle: Shift + L
+      if (event.key.toLowerCase() === "l" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        onToggleLoop();
+        return;
+      }
+
+      // Cue points: 1-8 to jump, Shift+1-8 to set
+      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+        const digit = parseInt(event.key, 10);
+        if (digit >= 1 && digit <= 8) {
+          event.preventDefault();
+          if (event.shiftKey) onSetCuePoint(digit - 1);
+          else onJumpToCuePoint(digit - 1);
+          return;
+        }
+      }
+
       if (event.code === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         onPlaySelectedTrack();
@@ -140,6 +164,9 @@ export function usePlayerKeyboardShortcuts({
     onOpenSettings,
     onPitchChange,
     onPlaySelectedTrack,
+    onToggleLoop,
+    onSetCuePoint,
+    onJumpToCuePoint,
     onSeekBy,
     onSelectAdjacentTrack,
     onToggleQueue,
