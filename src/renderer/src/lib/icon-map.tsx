@@ -3,6 +3,15 @@
 import type { ComponentType } from "react";
 import {
   ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+  CalendarDays,
+  Captions,
+  Columns3,
+  Disc3,
+  Hash,
+  ChevronDown,
   Bell,
   Brain,
   Check,
@@ -32,6 +41,7 @@ import {
   FolderOpen,
   FolderPlus,
   FolderSearch,
+  Gauge,
   ListFilter,
   Minimize2,
   Monitor,
@@ -51,6 +61,7 @@ import {
   Shield,
   Shuffle,
   SkipForward,
+  SlidersHorizontal,
   SquareLibrary,
   Star,
   Sun,
@@ -100,6 +111,15 @@ export type IconName =
   | "upload"
   | "plus"
   | "arrow-right"
+  | "arrow-up"
+  | "arrow-down"
+  | "arrow-up-down"
+  | "captions"
+  | "calendar-days"
+  | "columns-3"
+  | "disc-3"
+  | "hash"
+  | "chevron-down"
   | "search"
   | "loader"
   | "users"
@@ -134,6 +154,8 @@ export type IconName =
   | "music"
   | "shuffle"
   | "skip-forward"
+  | "sliders-horizontal"
+  | "gauge"
   | "volume-2"
   | "audio-waveform"
   | "repeat";
@@ -169,6 +191,15 @@ const lucideMap: Record<IconName, IconComponent> = {
   upload: Upload,
   plus: Plus,
   "arrow-right": ArrowRight,
+  "arrow-up": ArrowUp,
+  "arrow-down": ArrowDown,
+  "arrow-up-down": ArrowUpDown,
+  captions: Captions,
+  "calendar-days": CalendarDays,
+  "columns-3": Columns3,
+  "disc-3": Disc3,
+  hash: Hash,
+  "chevron-down": ChevronDown,
   search: Search,
   loader: Loader,
   users: Users,
@@ -203,6 +234,8 @@ const lucideMap: Record<IconName, IconComponent> = {
   music: Music,
   shuffle: Shuffle,
   "skip-forward": SkipForward,
+  "sliders-horizontal": SlidersHorizontal,
+  gauge: Gauge,
   "volume-2": Volume2,
   "audio-waveform": AudioWaveform,
   repeat: Repeat,

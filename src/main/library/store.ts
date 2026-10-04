@@ -13,6 +13,7 @@ import {
 } from "../../shared/library";
 import { electron } from "../electron";
 import { materializeStoredArtwork } from "../artwork";
+import { normalizeTrackListSettings } from "../../shared/track-list";
 
 const { app } = electron;
 let operationQueue: Promise<void> = Promise.resolve();
@@ -66,6 +67,12 @@ async function loadLibraryState(): Promise<LibraryState> {
         settings: { ...state.settings, session: runtimeState.session },
       }
     : state;
+  if (
+    !withRuntime.settings.library.showSubfolders &&
+    withRuntime.selectedSource?.type === "folder"
+  ) {
+    withRuntime.selectedSource = { type: "folder", id: withRuntime.selectedSource.id };
+  }
   cachedLibraryState = applyTrackAnalysisJournal(withRuntime, analysisEntries);
   cachedLibraryFilePath = filePath;
   return cachedLibraryState;
@@ -347,6 +354,7 @@ export function normalizeSettings(
         ...defaults.session,
         ...(grouped.session || {}),
         sidebarGroupOrder: grouped.session?.sidebarGroupOrder || defaults.session.sidebarGroupOrder,
+        trackList: normalizeTrackListSettings(grouped.session?.trackList),
         queue: {
           ...defaults.session.queue,
           ...(grouped.session?.queue || {}),

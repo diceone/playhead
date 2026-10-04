@@ -1,3 +1,4 @@
+import type { LibraryScanProgress } from "../shared/library-scan";
 import type { IpcRendererEvent } from "electron";
 import type {
   AppUpdateState,
@@ -20,6 +21,24 @@ import { electron } from "./electron";
 const { contextBridge, ipcRenderer, webUtils } = electron;
 
 const api: PlayheadApi = {
+  scanLibrary: (request) => ipcRenderer.invoke("library:scan", request),
+  cancelLibraryScan: (id) => ipcRenderer.invoke("library:cancel-scan", id),
+  onLibraryScanProgress: (callback) => {
+    const listener = (_event: IpcRendererEvent, progress: LibraryScanProgress) =>
+      callback(progress);
+    ipcRenderer.on("library:scan-progress", listener);
+    return () => ipcRenderer.removeListener("library:scan-progress", listener);
+  },
+  preparePlaybackCopy: (path, id) => ipcRenderer.invoke("library:prepare-playback-copy", path, id),
+  cancelPlaybackCopy: (id) => ipcRenderer.invoke("library:cancel-playback-copy", id),
+  getTrackLyrics: (id) => ipcRenderer.invoke("lyrics:get", id),
+  selectTrackLyrics: (id, path) => ipcRenderer.invoke("lyrics:select", id, path),
+  watchTrackLyrics: (id) => ipcRenderer.invoke("lyrics:watch", id),
+  onLyricsChanged: (callback) => {
+    const listener = (_event: IpcRendererEvent, id: string) => callback(id);
+    ipcRenderer.on("lyrics:changed", listener);
+    return () => ipcRenderer.removeListener("lyrics:changed", listener);
+  },
   getAppVersion: () => ipcRenderer.invoke("app:get-version"),
   getLibraryState: () => ipcRenderer.invoke("library:get-state"),
   saveLibraryState: (state: LibraryState) => ipcRenderer.invoke("library:save-state", state),

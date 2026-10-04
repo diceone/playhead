@@ -56,6 +56,42 @@ function namedState(name: string): LibraryState {
 }
 
 describe("library store settings", () => {
+  it("persists columns, widths and sort in the session across a restart", async () => {
+    const state = emptyLibraryState();
+    await writeLibraryState(state);
+    await writeLibrarySessionSettings({
+      ...state.settings.session,
+      trackList: {
+        columns: ["title", "genre", "disc"],
+        sort: { column: "disc", direction: "desc" },
+        widths: { title: 420, disc: 180 },
+      },
+    });
+    resetLibraryStoreCache();
+    expect((await readLibraryState()).settings.session.trackList).toEqual({
+      columns: ["title", "genre", "disc"],
+      sort: { column: "disc", direction: "desc" },
+      widths: { title: 420, disc: 180 },
+    });
+  });
+
+  it("defaults to a flat sidebar and preserves an explicit subfolder preference", async () => {
+    expect((await readLibraryState()).settings.library.showSubfolders).toBe(false);
+    const state = namedState("Subfolders");
+    state.settings.library.showSubfolders = true;
+    await writeLibraryState(state);
+    resetLibraryStoreCache();
+    expect((await readLibraryState()).settings.library.showSubfolders).toBe(true);
+  });
+
+  it("restores the watched folder when a saved subfolder is hidden", async () => {
+    const state = namedState("Flat");
+    state.selectedSource = { type: "folder", id: "music", path: "/music/house" };
+    await writeLibraryState(state);
+    resetLibraryStoreCache();
+    expect((await readLibraryState()).selectedSource).toEqual({ type: "folder", id: "music" });
+  });
+
   it("provides playback defaults", () => {
     expect(defaultPlaybackSettings()).toEqual({
       seekStepSeconds: 5,
@@ -66,6 +102,16 @@ describe("library store settings", () => {
       skipUnavailableTracks: true,
       pitchPercent: 0,
       pitchMode: "key-lock",
+      volumeBoostEnabled: false,
+      equalizer: {
+        enabled: false,
+        preset: "flat",
+        strength: "medium",
+        preampDb: 0,
+        gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        customPreampDb: 0,
+        customGainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      },
     });
   });
 
@@ -89,6 +135,13 @@ describe("library store settings", () => {
       shuffleEnabled: false,
       repeatMode: "off",
       sidebarGroupOrder: ["library", "playlists", "tags", "soundcloud"],
+      expandedFolderPaths: [],
+      levelMeters: { open: false },
+      trackList: { columns: ["title", "duration"], sort: null },
+      loopActive: false,
+      loopStart: 0,
+      loopEnd: 0,
+      loopBeats: 4,
       queue: {
         items: [],
         shuffledItems: [],
@@ -96,10 +149,6 @@ describe("library store settings", () => {
         source: null,
         panelOpen: false,
       },
-      loopActive: false,
-      loopStart: 0,
-      loopEnd: 0,
-      loopBeats: 4,
     });
   });
 
@@ -151,6 +200,7 @@ describe("library store settings", () => {
       enabledAudioExtensions: [".mp3"],
       watchFolders: false,
       rescanOnLaunch: true,
+      showSubfolders: false,
     });
     expect(settings.playback).toEqual(defaultPlaybackSettings());
   });

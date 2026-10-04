@@ -1,6 +1,16 @@
-import type { CuePoint, LibraryTag, LibraryTrack, PitchMode } from "../../../../shared/library";
+import type { PlaybackFailure } from "../../../../shared/playback";
+import { PlaybackError } from "./PlaybackError";
+import type {
+  CuePoint,
+  EqualizerSettings,
+  LibraryTag,
+  LibraryTrack,
+  PitchMode,
+} from "../../../../shared/library";
 import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useId, useRef, useState } from "react";
 import { SliderComfortable } from "@/components/ui/slider";
+import { SoundPanel } from "@/features/audio/SoundPanel";
 import { formatTime } from "@/lib/format";
 import { useIcons } from "@/lib/icon-context";
 import type { MenuAnchorPoint } from "@/lib/menu-position";
@@ -10,6 +20,7 @@ import { TrackArtwork } from "@/features/tracks/TrackArtwork";
 import { IconButton } from "./IconButton";
 import { PlayPauseMorphIcon, SkipBackFilledIcon, SkipForwardFilledIcon } from "./media-icons";
 import type { RepeatMode } from "./types";
+import { usePlaybackSeconds, type PlaybackClock } from "./playback-clock";
 import { WaveformEmptyState } from "./WaveformEmptyState";
 
 function formatAudioFormat(track: LibraryTrack): string {
@@ -31,23 +42,35 @@ function formatBpm(bpm?: number): string | null {
   return `${Math.round(bpm)} BPM`;
 }
 
+function ElapsedTime({ clock }: { clock: PlaybackClock }) {
+  return <span>{formatTime(usePlaybackSeconds(clock))}</span>;
+}
+
 export function Player({
   activeTrack,
   activeTags,
   isPlaying,
   isLoading,
+  playbackError,
+  preparingPlayback,
+  onRetryPlayback,
   hasWaveform,
   shouldAnimateWaveform,
   reduceMotion,
   isFavorite,
-  currentTime,
+  playbackClock,
   duration,
   waveformRef,
   shuffleEnabled,
   repeatMode,
   volume,
-  pitchPercent,
-  pitchMode,
+  maxVolume,
+  volumeBoostEnabled,
+  limiterActive,
+  equalizer,
+  levelsOpen,
+  lyricsOpen,
+  onToggleLyrics,
   onTogglePlayback,
   onPreviousTrack,
   onNextTrack,
@@ -56,6 +79,13 @@ export function Player({
   onToggleFavorite,
   onTrackInfoContextMenu,
   onVolumeChange,
+  onVolumeBoostChange,
+  onEqualizerPreview,
+  onEqualizerChange,
+  onToggleLevels,
+  levels,
+  pitchPercent,
+  pitchMode,
   onPitchChange,
   onCyclePitchMode,
   loopActive,
@@ -73,18 +103,26 @@ export function Player({
   activeTags: LibraryTag[];
   isPlaying: boolean;
   isLoading: boolean;
+  playbackError: PlaybackFailure | null;
+  preparingPlayback: boolean;
+  onRetryPlayback: () => void;
   hasWaveform: boolean;
   shouldAnimateWaveform: boolean;
   reduceMotion: boolean;
   isFavorite: boolean;
-  currentTime: number;
+  playbackClock: PlaybackClock;
   duration: number;
   waveformRef: React.Ref<HTMLDivElement>;
   shuffleEnabled: boolean;
   repeatMode: RepeatMode;
   volume: number;
-  pitchPercent: number;
-  pitchMode: PitchMode;
+  maxVolume: number;
+  volumeBoostEnabled: boolean;
+  limiterActive: boolean;
+  equalizer: EqualizerSettings;
+  levelsOpen: boolean;
+  lyricsOpen: boolean;
+  onToggleLyrics: () => void;
   onTogglePlayback: () => void;
   onPreviousTrack: () => void;
   onNextTrack: () => void;
@@ -93,6 +131,13 @@ export function Player({
   onToggleFavorite: () => void;
   onTrackInfoContextMenu: (point: MenuAnchorPoint) => void;
   onVolumeChange: (volume: number) => void;
+  onVolumeBoostChange: (enabled: boolean) => void;
+  onEqualizerPreview: (equalizer: EqualizerSettings) => void;
+  onEqualizerChange: (equalizer: EqualizerSettings) => void;
+  onToggleLevels: () => void;
+  levels?: React.ReactNode;
+  pitchPercent: number;
+  pitchMode: PitchMode;
   onPitchChange: (percent: number) => void;
   onCyclePitchMode: () => void;
   loopActive: boolean;
@@ -112,6 +157,33 @@ export function Player({
   const ShuffleIcon = icons.shuffle;
   const RepeatIcon = icons.repeat;
   const VolumeIcon = icons["volume-2"];
+  const SoundIcon = icons["sliders-horizontal"];
+  const LevelsIcon = icons.gauge;
+  const LyricsIcon = icons.captions;
+  const soundPanelId = useId();
+  const soundControlsRef = useRef<HTMLDivElement>(null);
+  const [soundPanelOpen, setSoundPanelOpen] = useState(false);
+
+  useEffect(() => {
+    if (!soundPanelOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!soundControlsRef.current?.contains(event.target as Node)) setSoundPanelOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSoundPanelOpen(false);
+        soundControlsRef.current?.querySelector("button")?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [soundPanelOpen]);
   const isKeyLocked = pitchMode === "key-lock";
   const pitchLabel = `${pitchPercent > 0 ? "+" : ""}${pitchPercent}%`;
   const adjustedBpm = activeTrack?.bpm ? Math.round(activeTrack.bpm * (1 + pitchPercent / 100)) : null;
@@ -128,7 +200,8 @@ export function Player({
   const hiddenTagCount = Math.max(0, activeTags.length - visibleTags.length);
 
   return (
-    <section className="relative flex shrink-0 flex-col gap-[10px] px-4 pt-4">
+    <section className="@container relative flex shrink-0 flex-col gap-[10px] px-4 pt-4">
+      {levels}
       <div className="app-drag flex h-16 items-center gap-3" {...windowDragHandlers}>
         <div
           className="no-drag flex min-w-0 flex-1 items-center gap-3"
@@ -223,7 +296,27 @@ export function Player({
           </div>
         </div>
 
-        <div className="no-drag flex shrink-0 items-center gap-4 text-[13px] font-medium tabular-nums text-muted-foreground">
+        <div className="no-drag flex shrink-0 items-center gap-2 text-[13px] font-medium tabular-nums text-muted-foreground">
+          <IconButton
+            title="Levels"
+            tooltip={levelsOpen ? "Hide levels" : "Show levels"}
+            active={levelsOpen}
+            ariaExpanded={levelsOpen}
+            onClick={onToggleLevels}
+          >
+            <LevelsIcon size={19} strokeWidth={1.8} />
+          </IconButton>
+          <IconButton
+            title="Lyrics"
+            tooltip={lyricsOpen ? "Hide lyrics" : "Show lyrics"}
+            active={lyricsOpen}
+            ariaExpanded={lyricsOpen}
+            ariaControls="lyrics-panel"
+            disabled={!activeTrack}
+            onClick={onToggleLyrics}
+          >
+            <LyricsIcon size={19} strokeWidth={1.8} />
+          </IconButton>
           <FavoriteHeartButton
             active={isFavorite}
             disabled={!activeTrack}
@@ -236,42 +329,54 @@ export function Player({
       <div className="relative mt-4 flex flex-col">
         <div className="overflow-hidden rounded-[20px] border border-white/5 bg-white/[0.015]">
           <div className="relative h-[74px] overflow-hidden">
-            <motion.div className="absolute inset-0 overflow-hidden rounded-[2px]">
-              <motion.div
-                className="h-full origin-left"
-                animate={{
-                  clipPath: hasWaveform ? "inset(0% 0% 0% 0%)" : "inset(0% 100% 0% 0%)",
-                  opacity: hasWaveform ? 1 : 0,
-                }}
-                transition={{
-                  clipPath: {
-                    duration: reduceMotion || !shouldAnimateWaveform ? 0 : 0.55,
-                    ease: [0.22, 1, 0.36, 1],
-                  },
-                  opacity: {
-                    duration: reduceMotion || !shouldAnimateWaveform ? 0 : hasWaveform ? 0.08 : 0.18,
-                  },
-                }}
-              >
-                <div ref={waveformRef} className="no-drag h-full w-full rounded-[2px]" />
-              </motion.div>
+          <motion.div className="absolute inset-0 overflow-hidden rounded-[2px]">
+            <motion.div
+              className="h-full origin-left"
+              animate={{
+                clipPath: hasWaveform ? "inset(0% 0% 0% 0%)" : "inset(0% 100% 0% 0%)",
+                opacity: hasWaveform && !playbackError ? 1 : 0,
+              }}
+              transition={{
+                clipPath: {
+                  duration: reduceMotion || !shouldAnimateWaveform ? 0 : 0.55,
+                  ease: [0.22, 1, 0.36, 1],
+                },
+                opacity: {
+                  duration: reduceMotion || !shouldAnimateWaveform ? 0 : hasWaveform ? 0.08 : 0.18,
+                },
+              }}
+            >
+              <div
+                ref={waveformRef}
+                className="no-drag h-full w-full rounded-[2px] [contain:layout_paint]"
+              />
             </motion.div>
+          </motion.div>
 
-            <AnimatePresence mode="wait">
-              {!hasWaveform && (
-                <WaveformEmptyState
-                  key={activeTrack ? "loading-waveform" : "empty-waveform"}
-                  isLoading={(isLoading && shouldAnimateWaveform) || !activeTrack}
-                  reduceMotion={reduceMotion}
-                />
-              )}
-            </AnimatePresence>
+          <AnimatePresence mode="wait">
+            {!hasWaveform && !playbackError && (
+              <WaveformEmptyState
+                key={activeTrack ? "loading-waveform" : "empty-waveform"}
+                isLoading={isLoading || !activeTrack}
+                reduceMotion={reduceMotion}
+              />
+            )}
+          </AnimatePresence>
+          {preparingPlayback && !playbackError && (
+            <div
+              role="status"
+              className="no-drag absolute inset-0 grid place-items-center bg-background/60 text-[12px] text-muted-foreground"
+            >
+              Preparing playback…
+            </div>
+          )}
+          {playbackError && <PlaybackError failure={playbackError} onRetry={onRetryPlayback} />}
           </div>
           {/* Minimap container — WaveSurfer MinimapPlugin inserts here */}
           <div id="waveform-minimap" className="min-h-[20px] border-t border-white/5" />
         </div>
         <div className="flex items-center justify-between pt-1 text-[10px] font-medium leading-none tabular-nums text-muted-foreground">
-          <span>{formatTime(currentTime)}</span>
+          <ElapsedTime clock={playbackClock} />
           <div className="no-drag flex items-center gap-1">
             <button
               type="button"
@@ -300,6 +405,7 @@ export function Player({
         </div>
       </div>
 
+      {/* Pitch control row */}
       {/* Pitch control row */}
       <div className="no-drag flex items-center gap-3 py-0.5">
         <button
@@ -396,9 +502,7 @@ export function Player({
               }`}
               title={
                 hasCue
-                  ? `Cue ${index + 1} — ${timeLabel}
-Click: jump to cue
-Right-click: delete cue`
+                  ? `Cue ${index + 1} — ${timeLabel}\nClick: jump to cue\nRight-click: delete cue`
                   : `Cue ${index + 1} — Click to set at current position`
               }
               onClick={() => {
@@ -420,14 +524,41 @@ Right-click: delete cue`
       </div>
 
       <div className="grid grid-cols-[1fr_auto_1fr] items-center py-1">
-        <div className="min-w-0 pr-4">
+        <div className="flex min-w-0 items-center gap-2 pr-4">
+          <div
+            ref={soundControlsRef}
+            className="relative shrink-0"
+            onKeyDown={(event) => {
+              if (event.key === " " || event.key === "Enter") event.stopPropagation();
+            }}
+          >
+            <IconButton
+              title="Sound"
+              ariaExpanded={soundPanelOpen}
+              ariaControls={soundPanelId}
+              active={soundPanelOpen || equalizer.enabled}
+              onClick={() => setSoundPanelOpen((value) => !value)}
+            >
+              <SoundIcon size={19} strokeWidth={1.8} />
+            </IconButton>
+            <SoundPanel
+              open={soundPanelOpen}
+              id={soundPanelId}
+              extraHeaderHeight={levelsOpen ? 68 : 0}
+              equalizer={equalizer}
+              volumeBoostEnabled={volumeBoostEnabled}
+              onEqualizerPreview={onEqualizerPreview}
+              onEqualizerChange={onEqualizerChange}
+              onVolumeBoostChange={onVolumeBoostChange}
+            />
+          </div>
           {trackInfo.length > 0 && (
-            <div className="truncate text-[12px] font-medium leading-normal text-muted-foreground">
+            <div className="min-w-0 truncate text-[12px] font-medium leading-normal text-muted-foreground @max-lg:hidden">
               {trackInfo.join(" · ")}
             </div>
           )}
         </div>
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex items-center justify-center gap-3 @max-lg:gap-1">
           <IconButton
             title={shuffleEnabled ? "Shuffle on" : "Shuffle"}
             active={shuffleEnabled}
@@ -514,18 +645,44 @@ Right-click: delete cue`
             </span>
           </IconButton>
         </div>
-        <div className="no-drag ml-auto w-[152px]">
-          <SliderComfortable
-            value={Math.round(volume * 100)}
-            min={0}
-            max={100}
-            step={1}
-            variant="scrubber"
-            label={<VolumeIcon size={15} strokeWidth={1.8} />}
-            formatValue={(value) => `${Math.round(value)}%`}
-            className="h-7 border-white/10 bg-white/[0.045]"
-            onChange={(value) => onVolumeChange(value / 100)}
-          />
+        <div className="no-drag ml-auto flex items-center gap-2">
+          {(volumeBoostEnabled || limiterActive) && (
+            <span
+              className={`rounded-[4px] border px-1 py-0.5 font-mono text-[10px] font-semibold leading-none transition-colors duration-100 @max-lg:hidden ${
+                limiterActive
+                  ? "border-red-400/60 bg-red-500/15 text-red-300"
+                  : "border-white/10 text-muted-foreground/60"
+              }`}
+              title="Limiter"
+            >
+              LIM
+            </span>
+          )}
+          <div className="relative w-[152px] @max-lg:w-[120px]">
+            {maxVolume > 1 && (
+              <span
+                className="pointer-events-none absolute -top-1.5 h-1 w-px bg-white/30"
+                style={{ left: `${100 / maxVolume}%` }}
+              />
+            )}
+            <SliderComfortable
+              value={Math.round(volume * 100)}
+              min={0}
+              max={Math.round(maxVolume * 100)}
+              step={1}
+              variant="scrubber"
+              label={
+                <VolumeIcon
+                  size={15}
+                  strokeWidth={1.8}
+                  className={limiterActive ? "@max-lg:text-red-300" : undefined}
+                />
+              }
+              formatValue={(value) => `${Math.round(value)}%`}
+              className="h-7 border-white/10 bg-white/[0.045]"
+              onChange={(value) => onVolumeChange(value / 100)}
+            />
+          </div>
         </div>
       </div>
     </section>

@@ -1,3 +1,12 @@
+import { LibraryScanStatus } from "@/features/library/LibraryScanStatus";
+import { useLibraryScan } from "@/features/library/use-library-scan";
+import { playbackFailure, type PlaybackFailure } from "../../shared/playback";
+import {
+  loadLocalPlayback,
+  PlaybackLoadError,
+  waitForPlayback,
+} from "@/features/player/local-playback";
+import { LyricsPanel } from "@/features/lyrics/LyricsPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig } from "framer-motion";
 import Hls from "hls.js";
@@ -13,20 +22,22 @@ import {
   type LastfmTrackPayload,
   type LibraryFolder,
   type LibrarySettings,
+  type EqualizerSettings,
   type LibraryMode,
   type LibraryPlaylist,
   type LibraryState,
   type LibraryTag,
   type LibraryTrack,
   type CuePoint,
-  type PlaybackSettings,
   type PitchMode,
+  type PlaybackSettings,
   type PlaylistExportFormat,
   type PlaylistImportTrack,
   type SoundCloudCollection,
   type SoundCloudSettings,
   type SoundCloudState,
   type TelemetrySettings,
+  libraryTrackMetadataVersion,
   defaultSessionSettings,
   defaultSoundCloudSettings,
 } from "../../shared/library";
@@ -52,6 +63,8 @@ import {
 } from "@/features/player/lastfm-scrobble";
 import { CreatePlaylistDialog } from "@/features/playlists/CreatePlaylistDialog";
 import { setMediaActionHandler, updateMediaPosition } from "@/features/player/media-session";
+import { PlaybackClock } from "@/features/player/playback-clock";
+import { limitWaveformProgressRendering } from "@/features/waveform/waveform";
 import type { RepeatMode } from "@/features/player/types";
 import { TrackSearchDialog } from "@/features/search/TrackSearchDialog";
 import { SettingsDialog, type AdvancedSettingsAction } from "@/features/settings/SettingsDialog";
@@ -60,6 +73,8 @@ import { DeleteTagDialog } from "@/features/sidebar/DeleteTagDialog";
 import { RemoveFolderDialog } from "@/features/sidebar/RemoveFolderDialog";
 import { Sidebar } from "@/features/sidebar/Sidebar";
 import { TrackList } from "@/features/tracks/TrackList";
+import { sortTrackList } from "@/features/tracks/track-columns";
+import { normalizeTrackListSettings } from "../../shared/track-list";
 import { RemoveTracksFromPlaylistDialog } from "@/features/tracks/RemoveTracksFromPlaylistDialog";
 import { UpdateMessageDialog, type UpdateMessage } from "@/features/updates/UpdateMessageDialog";
 import { updateMessagesByVersion } from "@/features/updates/update-messages";
@@ -74,10 +89,16 @@ import {
   decodeAudioBytes,
   decodeAudioTrack,
   shouldAnalyzeTrackBpm,
+  volumeNormalizationBoostedMaxGainDb,
   waveformAnalysisMaxPeaks,
   waveformAnalysisPeakRate,
 } from "@/features/audio/audio-analysis";
-import { PlaybackVolumeController } from "@/features/audio/playback-volume";
+import { PlaybackAudioEngine, type ChannelLevels } from "@/features/audio/audio-engine";
+import { getActiveEqualizerGains, normalizeEqualizerSettings } from "@/features/audio/equalizer";
+import { LevelsPanel } from "@/features/levels/LevelsPanel";
+import { normalizeLevelMeterSettings } from "@/features/levels/meter-model";
+import { boostedMaxVolume, PlaybackVolumeController } from "@/features/audio/playback-volume";
+import { useLimiterActivity } from "@/features/audio/use-limiter-activity";
 import {
   analyzeTrackNormalizationGain,
   getCachedTrackNormalizationGain,
@@ -91,6 +112,7 @@ import {
   getTrackArtistId,
   mergeScannedFolder,
 } from "@/features/library/library-model";
+import { getPathName } from "@/features/library/folder-tree";
 import { useLibraryActions } from "@/features/library/use-library-actions";
 import { EmptyLibraryState } from "@/features/library/EmptyLibraryState";
 import { LibraryDetailHeader } from "@/features/library/LibraryDetailHeader";
@@ -161,6 +183,7 @@ function getQueueSourceTitle(library: LibraryState): string {
   if (source.type === "library-artists") return "Artists";
   if (source.type === "library-albums") return "Albums";
   if (source.type === "folder") {
+    if (source.path) return getPathName(source.path);
     return library.folders.find((folder) => folder.id === source.id)?.name || "Folder";
   }
   if (source.type === "playlist") {
@@ -175,7 +198,7 @@ function getQueueSourceTitle(library: LibraryState): string {
 
 function getSourceScrollKey(source: LibraryState["selectedSource"]): string {
   if (!source) return "none";
-  return `${source.type}:${source.id || ""}`;
+  return `${source.type}:${source.id || ""}${source.path ? `:${source.path}` : ""}`;
 }
 
 function mergeScannedLibraryState(
@@ -420,11 +443,17 @@ export function App() {
   const rememberTrackPositionRef = useRef<(trackId: string, time: number) => void>(() => {});
   const clearTrackPositionRef = useRef<(trackId: string) => void>(() => {});
   const volumeRef = useRef(1);
+  const audioEngineRef = useRef<PlaybackAudioEngine | null>(null);
+  const [isAudioGraphActive, setIsAudioGraphActive] = useState(false);
   const volumeControllerRef = useRef<PlaybackVolumeController | null>(null);
   if (!volumeControllerRef.current) {
-    volumeControllerRef.current = new PlaybackVolumeController((nextVolume) => {
-      wavesurferRef.current?.setVolume(nextVolume);
-    });
+    volumeControllerRef.current = new PlaybackVolumeController(
+      (nextVolume) => {
+        wavesurferRef.current?.setVolume(nextVolume);
+      },
+      undefined,
+      (gain) => audioEngineRef.current?.setBoostGain(gain),
+    );
   }
   useEffect(
     () => () => {
@@ -438,6 +467,12 @@ export function App() {
   const selectionAnchorTrackIdRef = useRef<string | null>(null);
   const libraryBrowserSelectionAnchorIdRef = useRef<string | null>(null);
   const trackLoadRequestIdRef = useRef(0);
+  const isPlayingRef = useRef(false);
+  const playbackAbortRef = useRef<AbortController | null>(null);
+  const playbackStatusRef = useRef({ loading: false, copied: false });
+  const recoverPlaybackRef = useRef<(track: LibraryTrack, time: number, autoplay: boolean) => void>(
+    () => {},
+  );
   const trackLoadQueueRef = useRef(Promise.resolve());
   const bpmAnalysisQueueRef = useRef(Promise.resolve());
   const bpmAnalysisTrackIdsRef = useRef(new Set<string>());
@@ -454,14 +489,16 @@ export function App() {
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [hasWaveform, setHasWaveform] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [playbackClock] = useState(() => new PlaybackClock());
   const [duration, setDuration] = useState(0);
   const [waveformElement, setWaveformElement] = useState<HTMLDivElement | null>(null);
   const [isWaveformEngineReady, setIsWaveformEngineReady] = useState(false);
   const [shouldAnimateWaveform, setShouldAnimateWaveform] = useState(false);
   const [volume, setVolume] = useState(1);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
+  const { scanId, isScanning, startScan, finishScan } = useLibraryScan();
+  const [playbackError, setPlaybackError] = useState<PlaybackFailure | null>(null);
+  const [preparingPlayback, setPreparingPlayback] = useState(false);
   const [isLoadingTrack, setIsLoadingTrack] = useState(false);
   const [, setError] = useState("");
   const [metadataDialog, setMetadataDialog] = useState<MetadataDialogState>(null);
@@ -474,6 +511,7 @@ export function App() {
   const [cuePoints, setCuePoints] = useState<CuePoint[]>([]);
   const [pitchMode, setPitchMode] = useState<PitchMode>("key-lock");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false);
   const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
@@ -529,7 +567,11 @@ export function App() {
   );
   const libraryArtists = libraryCollections.artists;
   const libraryAlbums = libraryCollections.albums;
-  const tracks = useMemo(() => {
+  const trackListSettings = useMemo(
+    () => normalizeTrackListSettings(library.settings.session.trackList),
+    [library.settings.session.trackList],
+  );
+  const sourceTracks = useMemo(() => {
     if (library.selectedSource?.type === "soundcloud" && library.selectedSource.id) {
       return soundcloudTracksByCollection[library.selectedSource.id] || [];
     }
@@ -550,23 +592,20 @@ export function App() {
     library.tracks,
     soundcloudTracksByCollection,
   ]);
-  const hasSoundcloudTracks = useMemo(
-    () => Object.keys(soundcloudTracksByCollection).length > 0,
-    [soundcloudTracksByCollection],
+  const tracks = useMemo(
+    () => sortTrackList(sourceTracks, trackListSettings.sort),
+    [sourceTracks, trackListSettings.sort],
   );
   const allPlayableTracksById = useMemo(
-    () => {
-      if (!hasSoundcloudTracks) return library.tracks;
-      return {
-        ...library.tracks,
-        ...Object.fromEntries(
-          Object.values(soundcloudTracksByCollection)
-            .flat()
-            .map((track) => [track.id, track]),
-        ),
-      };
-    },
-    [library.tracks, soundcloudTracksByCollection, hasSoundcloudTracks],
+    () => ({
+      ...library.tracks,
+      ...Object.fromEntries(
+        Object.values(soundcloudTracksByCollection)
+          .flat()
+          .map((track) => [track.id, track]),
+      ),
+    }),
+    [library.tracks, soundcloudTracksByCollection],
   );
   const libraryTrackCount = useMemo(() => Object.keys(library.tracks).length, [library.tracks]);
   const activeTrack = activeTrackId ? allPlayableTracksById[activeTrackId] : null;
@@ -608,6 +647,7 @@ export function App() {
       return libraryAlbums.find((album) => album.id === source.id)?.title || "Album";
     }
     if (source.type === "folder") {
+      if (source.path) return getPathName(source.path);
       return library.folders.find((folder) => folder.id === source.id)?.name || "Folder";
     }
     if (source.type === "loved") return "Loved";
@@ -1131,21 +1171,30 @@ export function App() {
       allowSkipUnavailable = true,
       queueMode: "preserve" | "source" = "preserve",
       activeQueueItemId?: string,
+      forceLocalCopy = false,
     ) => {
       const wavesurfer = wavesurferRef.current;
       if (!wavesurfer) return;
+      playbackAbortRef.current?.abort();
+      const playbackAbort = new AbortController();
+      playbackAbortRef.current = playbackAbort;
+      playbackStatusRef.current = { loading: true, copied: forceLocalCopy };
+      setPlaybackError(null);
+      setPreparingPlayback(false);
       const requestId = trackLoadRequestIdRef.current + 1;
       trackLoadRequestIdRef.current = requestId;
       loadedTrackIdRef.current = null;
-      lastfmPlaybackSessionRef.current = null;
-      lastfmNowPlayingTrackIdRef.current = null;
+      if (!forceLocalCopy) {
+        lastfmPlaybackSessionRef.current = null;
+        lastfmNowPlayingTrackIdRef.current = null;
+      }
 
       wavesurfer.pause();
       setIsLoadingTrack(true);
       setShouldAnimateWaveform(false);
       setError("");
       setActiveTrackId(track.id);
-      setCurrentTime(0);
+      playbackClock.setTime(0);
       setDuration(track.duration || 0);
       setIsPlaying(false);
       const nextQueue =
@@ -1218,7 +1267,11 @@ export function App() {
         };
         const cachedWaveform = remoteTrack
           ? null
-          : await window.playhead.getWaveformCache(waveformCacheRequest);
+          : await waitForPlayback(
+              window.playhead.getWaveformCache(waveformCacheRequest),
+              playbackAbort.signal,
+              2000,
+            ).catch(() => null);
         if (requestId !== trackLoadRequestIdRef.current) return;
         setShouldAnimateWaveform(!cachedWaveform);
         if (!cachedWaveform) setHasWaveform(false);
@@ -1237,30 +1290,40 @@ export function App() {
               );
               return;
             }
-            await wavesurfer.load(
-              audioUrl,
-              cachedWaveform?.peaks,
-              cachedWaveform?.duration || track.duration || undefined,
-            );
+            const result = await loadLocalPlayback({
+              player: wavesurfer,
+              url: audioUrl,
+              path: track.path,
+              requestId,
+              duration: track.duration,
+              cached: cachedWaveform,
+              startTime,
+              autoplay,
+              signal: playbackAbort.signal,
+              forceCopy: forceLocalCopy,
+              api: window.playhead,
+              onPreparing: () => {
+                if (requestId === trackLoadRequestIdRef.current) setPreparingPlayback(true);
+              },
+            });
+            if (requestId === trackLoadRequestIdRef.current)
+              playbackStatusRef.current.copied = result.copied;
           }));
         if (requestId !== trackLoadRequestIdRef.current) return;
 
         loadedTrackIdRef.current = track.id;
-        lastfmPlaybackSessionRef.current = null;
-        lastfmNowPlayingTrackIdRef.current = null;
         setHasWaveform(remoteTrack ? remoteHasWaveform : true);
         setDuration(wavesurfer.getDuration() || track.duration || 0);
 
         // Load cue points for this track
         const trackCues = track.cuePoints || [];
         setCuePoints(trackCues);
-        // Reset loop when switching tracks
         if (loopRegionRef.current) {
           loopRegionRef.current = null;
           setLoopActive(false);
         }
-        // Render cue points after waveform is ready
         setTimeout(() => renderCuePointRegions(trackCues), 100);
+
         if (!cachedWaveform && !remoteTrack) {
           const loadedDuration = wavesurfer.getDuration() || track.duration || 0;
           const maxLength = Math.max(
@@ -1285,23 +1348,22 @@ export function App() {
         });
         if (remoteTrack) void analyzeSoundCloudTrackBpm(track);
         else void analyzeTrackBpm(track);
-        if (startTime > 0) {
+        if (remoteTrack && startTime > 0) {
           wavesurfer.setTime(clamp(startTime, 0, wavesurfer.getDuration() || startTime));
-          setCurrentTime(wavesurfer.getCurrentTime());
+          playbackClock.setTime(wavesurfer.getCurrentTime());
         }
 
-        if (autoplay) {
-          try {
-            await wavesurfer.play();
-          } catch {
-            setIsPlaying(false);
-            setError("Playback could not start.");
-          }
-        }
+        playbackClock.setTime(wavesurfer.getCurrentTime());
+        if (autoplay && remoteTrack) await wavesurfer.play();
       } catch (loadError) {
         if (requestId !== trackLoadRequestIdRef.current) return;
         console.error("Failed to load track", { path: track.path, error: loadError });
-        const loadErrorMessage = getErrorMessage(loadError, track.artist);
+        const failure =
+          loadError instanceof PlaybackLoadError ? loadError.failure : playbackFailure(loadError);
+        setPlaybackError(failure);
+        setIsPlaying(false);
+        wavesurfer.pause();
+        const loadErrorMessage = getErrorMessage(loadError, "This track could not be loaded.");
         const soundCloudPlaybackStop =
           remoteTrack && isSoundCloudPlaybackStopError(loadErrorMessage);
         loadedTrackIdRef.current = null;
@@ -1312,7 +1374,8 @@ export function App() {
           autoplay &&
           allowSkipUnavailable &&
           library.settings.playback.skipUnavailableTracks &&
-          !soundCloudPlaybackStop
+          !soundCloudPlaybackStop &&
+          (remoteTrack || failure.kind === "decode")
         ) {
           showTrackActionToast({
             action: "Skipped unavailable track",
@@ -1324,12 +1387,17 @@ export function App() {
           showSimpleActionToast(loadErrorMessage, "error");
         }
       } finally {
-        if (requestId === trackLoadRequestIdRef.current) setIsLoadingTrack(false);
+        if (requestId === trackLoadRequestIdRef.current) {
+          playbackStatusRef.current.loading = false;
+          setPreparingPlayback(false);
+          setIsLoadingTrack(false);
+        }
       }
     },
     [
       allPlayableTracksById,
       library,
+      playbackClock,
       analyzeTrackBpm,
       analyzeSoundCloudTrackBpm,
       destroyHls,
@@ -1339,6 +1407,12 @@ export function App() {
       tracks,
     ],
   );
+
+  useEffect(() => {
+    recoverPlaybackRef.current = (track, time, autoplay) => {
+      void selectTrack(track, autoplay, time, false, "preserve", undefined, true);
+    };
+  }, [selectTrack]);
 
   const playSearchResult = useCallback(
     async (track: LibraryTrack) => {
@@ -1358,13 +1432,17 @@ export function App() {
   );
 
   const addFolder = useCallback(async () => {
-    setIsScanning(true);
+    const scanId = startScan();
+    if (!scanId) return;
     setError("");
 
     try {
-      const scannedFolders = await window.playhead.selectMusicFolder(
-        library.settings.library.enabledAudioExtensions,
-      );
+      const result = await window.playhead.scanLibrary({
+        id: scanId,
+        extensions: library.settings.library.enabledAudioExtensions,
+      });
+      if (result.status === "cancelled") return;
+      const scannedFolders = result.folders;
       if (scannedFolders.length === 0) return;
       let nextState = libraryRef.current;
       let lastScannedFolderId: string | null = null;
@@ -1398,16 +1476,17 @@ export function App() {
       setError(message);
       showSimpleActionToast(message, "error");
     } finally {
-      setIsScanning(false);
+      finishScan(scanId);
     }
-  }, [library, persistLibrary]);
+  }, [library, persistLibrary, startScan, finishScan]);
 
   const addFolderPaths = useCallback(
     async (folderPaths: string[]) => {
       const uniqueFolderPaths = Array.from(new Set(folderPaths));
       if (uniqueFolderPaths.length === 0) return;
 
-      setIsScanning(true);
+      const scanId = startScan();
+      if (!scanId) return;
       setError("");
 
       try {
@@ -1415,10 +1494,13 @@ export function App() {
         let lastScannedFolderId: string | null = null;
         const scannedFolderIds: string[] = [];
 
-        const scannedFolders = await window.playhead.scanFolderPaths(
-          uniqueFolderPaths,
-          library.settings.library.enabledAudioExtensions,
-        );
+        const result = await window.playhead.scanLibrary({
+          id: scanId,
+          paths: uniqueFolderPaths,
+          extensions: library.settings.library.enabledAudioExtensions,
+        });
+        if (result.status === "cancelled") return;
+        const scannedFolders = result.folders;
         for (const scanned of scannedFolders) {
           nextState = mergeScannedFolder(nextState, scanned);
           lastScannedFolderId = scanned.folder.id;
@@ -1447,42 +1529,55 @@ export function App() {
         setError(message);
         showSimpleActionToast(message, "error");
       } finally {
-        setIsScanning(false);
+        finishScan(scanId);
       }
     },
-    [library, persistLibrary],
+    [library, persistLibrary, startScan, finishScan],
   );
 
   const rescanLibrary = useCallback(
-    async (state: LibraryState) => {
+    async (state: LibraryState, options: { preserveView?: boolean } = {}) => {
       if (state.folders.length === 0) {
         await persistLibrary(state);
         return;
       }
 
-      setIsScanning(true);
+      const scanId = startScan();
+      if (!scanId) return;
       setError("");
 
       try {
         let nextState = state;
         const scannedFolderIds = state.folders.map((folder) => folder.id);
-        const scannedFolders = await window.playhead.scanFolders(
-          state.folders,
-          state.settings.library.enabledAudioExtensions,
-        );
+        const result = await window.playhead.scanLibrary({
+          id: scanId,
+          paths: state.folders.map((folder) => folder.path),
+          extensions: state.settings.library.enabledAudioExtensions,
+        });
+        if (result.status === "cancelled") return;
+        const scannedFolders = result.folders;
         for (const scanned of scannedFolders) {
           nextState = mergeScannedFolder(nextState, scanned);
         }
         const latest = libraryRef.current;
         const persistedState = mergeScannedLibraryState(latest, nextState, scannedFolderIds, {
-          selectedSource: state.selectedSource,
-          settings: state.settings,
+          ...(options.preserveView ? {} : { selectedSource: state.selectedSource }),
+          settings: options.preserveView
+            ? latest.settings
+            : { ...state.settings, session: latest.settings.session },
         });
         if (activeTrackId && !persistedState.tracks[activeTrackId]) {
+          playbackAbortRef.current?.abort();
+          trackLoadRequestIdRef.current++;
+          loadedTrackIdRef.current = null;
+          playbackStatusRef.current.loading = false;
+          setPlaybackError(null);
+          setPreparingPlayback(false);
+          setIsLoadingTrack(false);
           wavesurferRef.current?.stop();
           wavesurferRef.current?.empty();
           setActiveTrackId(null);
-          setCurrentTime(0);
+          playbackClock.setTime(0);
           setDuration(0);
           setIsPlaying(false);
           setHasWaveform(false);
@@ -1491,19 +1586,22 @@ export function App() {
 
         await persistLibrary(persistedState);
       } catch (error) {
-        setError(getErrorMessage(error, "Could not rescan the library."));
+        const message = getErrorMessage(error, "Could not rescan the library.");
+        setError(message);
+        showSimpleActionToast(message, "error");
       } finally {
-        setIsScanning(false);
+        finishScan(scanId);
       }
     },
-    [activeTrackId, persistLibrary],
+    [activeTrackId, persistLibrary, playbackClock, startScan, finishScan],
   );
 
   const updateLibrarySettings = useCallback(
     async (settings: LibrarySettings) => {
       const nextLibrarySettings = { ...settings, watchFolders: true };
-      const onlyModeChanged =
-        nextLibrarySettings.mode !== library.settings.library.mode &&
+      const onlyDisplaySettingsChanged =
+        (nextLibrarySettings.mode !== library.settings.library.mode ||
+          nextLibrarySettings.showSubfolders !== library.settings.library.showSubfolders) &&
         nextLibrarySettings.watchFolders === library.settings.library.watchFolders &&
         nextLibrarySettings.rescanOnLaunch === library.settings.library.rescanOnLaunch &&
         nextLibrarySettings.enabledAudioExtensions.join("|") ===
@@ -1517,10 +1615,12 @@ export function App() {
               : library.folders[0]
                 ? { type: "folder" as const, id: library.folders[0].id }
                 : null
-            : library.selectedSource,
+            : !nextLibrarySettings.showSubfolders && library.selectedSource?.type === "folder"
+              ? { type: "folder" as const, id: library.selectedSource.id }
+              : library.selectedSource,
         settings: { ...library.settings, library: nextLibrarySettings },
       };
-      if (onlyModeChanged) {
+      if (onlyDisplaySettingsChanged) {
         await persistLibrary(nextState);
         return;
       }
@@ -1781,6 +1881,13 @@ export function App() {
 
   const clearPlaybackState = useCallback(() => {
     destroyHls();
+    playbackAbortRef.current?.abort();
+    trackLoadRequestIdRef.current++;
+    loadedTrackIdRef.current = null;
+    playbackStatusRef.current.loading = false;
+    setPlaybackError(null);
+    setPreparingPlayback(false);
+    setIsLoadingTrack(false);
     wavesurferRef.current?.stop();
     wavesurferRef.current?.empty();
     setActiveTrackId(null);
@@ -1788,12 +1895,12 @@ export function App() {
     setScrollToTrackId(null);
     setHasWaveform(false);
     setShouldAnimateWaveform(false);
-    setCurrentTime(0);
+    playbackClock.setTime(0);
     setDuration(0);
     setIsPlaying(false);
     setIsLoadingTrack(false);
     setError("");
-  }, [destroyHls]);
+  }, [destroyHls, playbackClock]);
 
   const runAdvancedSettingsAction = useCallback(
     async (action: AdvancedSettingsAction) => {
@@ -1869,10 +1976,17 @@ export function App() {
           : library.selectedSource;
 
       if (activeTrackId && removedTrackIds.has(activeTrackId)) {
+        playbackAbortRef.current?.abort();
+        trackLoadRequestIdRef.current++;
+        loadedTrackIdRef.current = null;
+        playbackStatusRef.current.loading = false;
+        setPlaybackError(null);
+        setPreparingPlayback(false);
+        setIsLoadingTrack(false);
         wavesurferRef.current?.stop();
         wavesurferRef.current?.empty();
         setActiveTrackId(null);
-        setCurrentTime(0);
+        playbackClock.setTime(0);
         setDuration(0);
         setIsPlaying(false);
         setHasWaveform(false);
@@ -1897,7 +2011,7 @@ export function App() {
         selectedSource,
       });
     },
-    [activeTrackId, library, persistLibrary],
+    [activeTrackId, library, persistLibrary, playbackClock],
   );
 
   const toggleFavoriteTrack = useCallback(
@@ -2157,7 +2271,17 @@ export function App() {
       return;
     }
 
-    await wavesurfer.playPause();
+    try {
+      await wavesurfer.playPause();
+    } catch (error) {
+      if (activeTrack && !isSoundCloudTrack(activeTrack) && !playbackStatusRef.current.copied) {
+        recoverPlaybackRef.current(activeTrack, wavesurfer.getCurrentTime(), true);
+      } else {
+        loadedTrackIdRef.current = null;
+        setIsPlaying(false);
+        setPlaybackError(playbackFailure(error));
+      }
+    }
   }, [activeTrack, activeTrackId, allPlayableTracksById, selectTrack, selectedTrackIds, tracks]);
 
   const setPlayerVolume = useCallback((nextVolume: number) => {
@@ -2166,32 +2290,29 @@ export function App() {
     setVolume(baseVolume);
   }, []);
 
-  // Apply pitch to the media element whenever pitch state changes
+  // --- Pitch Control ---
+
   useEffect(() => {
     const wavesurfer = wavesurferRef.current;
     if (!wavesurfer) return;
     const media = wavesurfer.getMediaElement();
-    if (!media) return;
     media.playbackRate = 1 + pitchPercent / 100;
     media.preservesPitch = pitchMode === "key-lock";
   }, [pitchPercent, pitchMode]);
 
-  // Also apply pitch when a new track is loaded
   useEffect(() => {
-    if (!loadedTrackIdRef.current) return;
     const wavesurfer = wavesurferRef.current;
-    if (!wavesurfer) return;
+    if (!wavesurfer || loadedTrackIdRef.current === null) return;
     const media = wavesurfer.getMediaElement();
-    if (!media) return;
     media.playbackRate = 1 + pitchPercent / 100;
     media.preservesPitch = pitchMode === "key-lock";
   }, [loadedTrackIdRef.current, pitchPercent, pitchMode]);
 
   const setPlayerPitch = useCallback((nextPitch: number) => {
-    const clamped = Math.round(Math.max(-16, Math.min(16, nextPitch)) * 10) / 10;
+    const clamped = Math.max(-16, Math.min(16, nextPitch));
     setPitchPercent(clamped);
-    // Persist to library
-    setLibrary((current) => {
+    const current = libraryRef.current;
+    if (current) {
       const nextState = {
         ...current,
         settings: {
@@ -2201,15 +2322,14 @@ export function App() {
       };
       libraryRef.current = nextState;
       void window.playhead.saveLibraryState(nextState);
-      return nextState;
-    });
+    }
   }, []);
 
   const cyclePitchMode = useCallback(() => {
     setPitchMode((prev) => {
       const next: PitchMode = prev === "key-lock" ? "vinyl" : "key-lock";
-      // Persist to library
-      setLibrary((current) => {
+      const current = libraryRef.current;
+      if (current) {
         const nextState = {
           ...current,
           settings: {
@@ -2219,23 +2339,9 @@ export function App() {
         };
         libraryRef.current = nextState;
         void window.playhead.saveLibraryState(nextState);
-        return nextState;
-      });
+      }
       return next;
     });
-  }, []);
-
-  const seekBy = useCallback((offset: number) => {
-    const wavesurfer = wavesurferRef.current;
-    if (!wavesurfer) return;
-
-    const nextTime = clamp(
-      wavesurfer.getCurrentTime() + offset,
-      0,
-      wavesurfer.getDuration() || Number.POSITIVE_INFINITY,
-    );
-    wavesurfer.setTime(nextTime);
-    setCurrentTime(wavesurfer.getCurrentTime());
   }, []);
 
   // --- Cue Points ---
@@ -2262,14 +2368,9 @@ export function App() {
       const wavesurfer = wavesurferRef.current;
       if (!wavesurfer || !activeTrackId) return;
       const trackId = activeTrackId;
-
       const position = wavesurfer.getCurrentTime();
       const cueId = `cue-${index}`;
-
-      // Use local cuePoints state (not library state) so newly set cues are immediately available
       const existingCues = cuePoints;
-
-      // Toggle off if already set at this position (within 0.5s)
       const existing = existingCues.find((c) => c.id === cueId);
       if (existing && Math.abs(existing.position - position) < 0.5) {
         const next = existingCues.filter((c) => c.id !== cueId);
@@ -2278,8 +2379,6 @@ export function App() {
         void window.playhead.saveLibraryCuePoints(trackId, next);
         return;
       }
-
-      // Set or overwrite cue at this slot
       const next = existingCues.filter((c) => c.id !== cueId);
       next.push({ id: cueId, position, label: String(index + 1) });
       next.sort((a, b) => a.position - b.position);
@@ -2298,10 +2397,10 @@ export function App() {
       const cue = cuePoints.find((c) => c.id === cueId);
       if (cue) {
         wavesurfer.setTime(cue.position);
-        setCurrentTime(cue.position);
+        playbackClock.setTime(cue.position);
       }
     },
-    [activeTrackId, cuePoints],
+    [activeTrackId, cuePoints, playbackClock],
   );
 
   const clearCuePoint = useCallback(
@@ -2322,19 +2421,14 @@ export function App() {
     const wavesurfer = wavesurferRef.current;
     const regions = regionsRef.current;
     if (!wavesurfer || !regions) return;
-
     setLoopActive((prev) => {
       const next = !prev;
       if (!next) {
-        // Disable loop
         loopRegionRef.current = null;
         regions.clearRegions();
-        // Re-render cue points
         renderCuePointRegions(cuePoints);
         return false;
       }
-
-      // Enable loop: create a loop region based on BPM and current position
       const currentTime = wavesurfer.getCurrentTime();
       const track = activeTrackId ? allPlayableTracksById[activeTrackId] : null;
       const bpm = track?.bpm || 128;
@@ -2342,11 +2436,8 @@ export function App() {
       const loopLength = loopBeats / beatsPerSecond;
       const loopStart = currentTime;
       const loopEnd = Math.min(loopStart + loopLength, wavesurfer.getDuration() || loopStart + loopLength);
-
-      // Remove any existing loop region and re-add cue points
       regions.clearRegions();
       renderCuePointRegions(cuePoints);
-
       const region = regions.addRegion({
         id: "loop-region",
         start: loopStart,
@@ -2357,18 +2448,15 @@ export function App() {
         resize: true,
       });
       loopRegionRef.current = region;
-
       region.on("update-end", () => {
         loopRegionRef.current = region;
       });
-
       return true;
     });
   }, [activeTrackId, allPlayableTracksById, cuePoints, loopBeats, renderCuePointRegions]);
 
   const setLoopBeatsAmount = useCallback((beats: number) => {
     setLoopBeats(beats);
-    // If loop is active, update the loop region
     if (loopActive && loopRegionRef.current) {
       const wavesurfer = wavesurferRef.current;
       const track = activeTrackId ? allPlayableTracksById[activeTrackId] : null;
@@ -2386,28 +2474,17 @@ export function App() {
     const regions = regionsRef.current;
     if (!wavesurfer) return;
     setZoomLevel((current) => {
-      // Zoom levels: 0 = default (fill), 1-8 = increasing zoom
-      const next = direction === "in"
-        ? Math.min(8, current + 1)
-        : Math.max(0, current - 1);
+      const next = direction === "in" ? Math.min(8, current + 1) : Math.max(0, current - 1);
       if (next === current) return current;
-      // minPxPerSec values: 0 = fill parent, then exponential scale
       const pxPerSec = next === 0 ? 0 : Math.pow(2, next) * 20;
       wavesurfer.zoom(pxPerSec);
-
-      // Re-render regions after zoom — wavesurfer.zoom() clears the waveform
-      // and regions need to be re-added
       if (regions) {
-        // Capture current loop region bounds before clearing
         const currentLoop = loopRegionRef.current;
         const loopStart = currentLoop?.start ?? 0;
         const loopEnd = currentLoop?.end ?? 0;
         const hasLoop = Boolean(currentLoop) && loopActive;
-
-        // Clear and re-add cue points + loop region
         regions.clearRegions();
         renderCuePointRegions(cuePoints);
-
         if (hasLoop) {
           const region = regions.addRegion({
             id: "loop-region",
@@ -2424,10 +2501,126 @@ export function App() {
           });
         }
       }
-
       return next;
     });
   }, [cuePoints, loopActive, loopBeats, renderCuePointRegions]);
+
+  const seekToLyric = useCallback(
+    (time: number) => {
+      const wavesurfer = wavesurferRef.current;
+      if (!wavesurfer) return;
+      wavesurfer.setTime(clamp(time, 0, wavesurfer.getDuration() || 0));
+      playbackClock.setTime(wavesurfer.getCurrentTime());
+    },
+    [playbackClock],
+  );
+
+  const closeLyrics = useCallback(() => {
+    setLyricsOpen(false);
+    document.querySelector<HTMLButtonElement>('button[aria-controls="lyrics-panel"]')?.focus();
+  }, []);
+
+  const seekBy = useCallback(
+    (offset: number) => {
+      const wavesurfer = wavesurferRef.current;
+      if (!wavesurfer) return;
+
+      const nextTime = clamp(
+        wavesurfer.getCurrentTime() + offset,
+        0,
+        wavesurfer.getDuration() || Number.POSITIVE_INFINITY,
+      );
+      wavesurfer.setTime(nextTime);
+      playbackClock.setTime(wavesurfer.getCurrentTime());
+    },
+    [playbackClock],
+  );
+
+  const volumeBoostEnabled = library.settings.playback.volumeBoostEnabled;
+  const maxVolume = volumeBoostEnabled && isAudioGraphActive ? boostedMaxVolume : 1;
+  const limiterActive = useLimiterActivity(
+    () => audioEngineRef.current?.getLimiterReduction() ?? 0,
+    isPlaying && isAudioGraphActive,
+  );
+
+  const equalizer = useMemo(
+    () => normalizeEqualizerSettings(library.settings.playback.equalizer),
+    [library.settings.playback.equalizer],
+  );
+  const levelMeters = useMemo(
+    () => normalizeLevelMeterSettings(library.settings.session.levelMeters),
+    [library.settings.session.levelMeters],
+  );
+
+  const setMeteringEnabled = useCallback((enabled: boolean) => {
+    const engine = audioEngineRef.current;
+    if (!engine) return;
+    const playback = libraryRef.current.settings.playback;
+    engine.setProcessingEnabled(
+      normalizeEqualizerSettings(playback.equalizer).enabled || playback.volumeBoostEnabled,
+    );
+    void engine.setMeteringEnabled(enabled);
+    setIsAudioGraphActive(engine.isActive());
+  }, []);
+
+  const readLevels = useCallback(
+    (target: ChannelLevels) => audioEngineRef.current?.readLevels(target) ?? false,
+    [],
+  );
+
+  const toggleLevelMeters = useCallback(() => {
+    const session = libraryRef.current.settings.session;
+    persistSessionSettings({
+      ...session,
+      levelMeters: { open: !normalizeLevelMeterSettings(session.levelMeters).open },
+    });
+  }, [persistSessionSettings]);
+
+  useEffect(() => {
+    if (!isWaveformEngineReady) return;
+    if (volumeBoostEnabled) audioEngineRef.current?.activate();
+    setIsAudioGraphActive(audioEngineRef.current?.isActive() ?? false);
+    const baseVolume = volumeControllerRef.current?.setMaxVolume(maxVolume) ?? 1;
+    volumeRef.current = baseVolume;
+    setVolume(baseVolume);
+  }, [isWaveformEngineReady, maxVolume, volumeBoostEnabled]);
+
+  useEffect(() => {
+    if (!isWaveformEngineReady) return;
+    const engine = audioEngineRef.current;
+    if (equalizer.enabled) engine?.activate();
+    setIsAudioGraphActive(engine?.isActive() ?? false);
+    engine?.setEqualizer(getActiveEqualizerGains(equalizer));
+    engine?.setProcessingEnabled(equalizer.enabled || volumeBoostEnabled);
+  }, [equalizer, isWaveformEngineReady, volumeBoostEnabled]);
+
+  const previewEqualizer = useCallback((nextEqualizer: EqualizerSettings) => {
+    const engine = audioEngineRef.current;
+    if (nextEqualizer.enabled) {
+      engine?.activate();
+      engine?.setProcessingEnabled(true);
+    }
+    setIsAudioGraphActive(engine?.isActive() ?? false);
+    engine?.setEqualizer(getActiveEqualizerGains(nextEqualizer));
+  }, []);
+
+  const changeEqualizer = useCallback((nextEqualizer: EqualizerSettings) => {
+    // Pointer previews do not save. Commit once on release (or each keyboard edit),
+    // so closing the app immediately after an edit cannot discard a pending debounce.
+    const current = libraryRef.current;
+    const nextState = {
+      ...current,
+      settings: {
+        ...current.settings,
+        playback: { ...current.settings.playback, equalizer: nextEqualizer },
+      },
+    };
+    libraryRef.current = nextState;
+    setLibrary(nextState);
+    void window.playhead.saveLibraryState(nextState).catch((error) => {
+      console.error("Could not save equalizer settings", error);
+    });
+  }, []);
 
   const changeVolumeBy = useCallback(
     (offset: number) => {
@@ -2446,22 +2639,27 @@ export function App() {
       return () => abortController.abort();
     }
 
+    const maxGainDb = volumeBoostEnabled ? volumeNormalizationBoostedMaxGainDb : undefined;
     controller.setNormalizationGain(1);
     void (async () => {
-      const cachedGain = await getCachedTrackNormalizationGain(activeTrack);
+      const cachedGain = await getCachedTrackNormalizationGain(activeTrack, maxGainDb);
       if (abortController.signal.aborted) return;
       if (cachedGain !== null) {
         controller.setNormalizationGain(cachedGain, 160);
         return;
       }
 
-      const gain = await analyzeTrackNormalizationGain(activeTrack, abortController.signal);
+      const gain = await analyzeTrackNormalizationGain(
+        activeTrack,
+        abortController.signal,
+        maxGainDb,
+      );
       if (abortController.signal.aborted) return;
       controller.setNormalizationGain(gain, 240);
     })();
 
     return () => abortController.abort();
-  }, [activeTrack, isLoadingTrack, library.settings.playback.normalizeVolume]);
+  }, [activeTrack, isLoadingTrack, library.settings.playback.normalizeVolume, volumeBoostEnabled]);
 
   const selectTrackInList = useCallback(
     (track: LibraryTrack, event?: React.MouseEvent<HTMLDivElement>) => {
@@ -2530,6 +2728,7 @@ export function App() {
   }, [allPlayableTracksById, selectTrack, selectedTrackIds]);
 
   const selectLibrarySource = useCallback((source: LibraryState["selectedSource"]) => {
+    setLyricsOpen(false);
     setSelectedLibraryBrowserItemIds([]);
     libraryBrowserSelectionAnchorIdRef.current = null;
     setLibrary((current) => {
@@ -2819,6 +3018,7 @@ export function App() {
 
     void window.playhead.getLibraryState().then((state) => {
       const nextState = normalizeSourceForMode(state);
+      libraryRef.current = nextState;
       setLibrary(nextState);
       setShuffleEnabled(nextState.settings.session.shuffleEnabled);
       setRepeatMode(nextState.settings.session.repeatMode);
@@ -2830,7 +3030,11 @@ export function App() {
         nextState.settings.library.enabledAudioExtensions,
       );
       if (nextState !== state) void window.playhead.saveLibraryState(nextState);
-      if (nextState.settings.library.rescanOnLaunch) void rescanLibrary(nextState);
+      const needsMetadataRefresh = nextState.folders.some(
+        (folder) => folder.metadataVersion !== libraryTrackMetadataVersion,
+      );
+      if (nextState.settings.library.rescanOnLaunch || needsMetadataRefresh)
+        void rescanLibrary(nextState, { preserveView: true });
     });
   }, [rescanLibrary]);
 
@@ -2900,22 +3104,46 @@ export function App() {
   }, [backFromLibraryDetail, library.selectedSource, library.settings.library.mode]);
 
   useEffect(() => {
-    return window.playhead.onFolderChanged((folderId) => {
-      const current = libraryRef.current;
-      const folder = current.folders.find((item) => item.id === folderId);
-      if (!folder) return;
-
-      void window.playhead
-        .scanFolder(folder, current.settings.library.enabledAudioExtensions)
-        .then((scanned) => {
-          const latest = libraryRef.current;
-          const scannedState = mergeScannedFolder(latest, scanned);
-          return persistLibrary(
-            mergeScannedLibraryState(latest, scannedState, [scanned.folder.id]),
+    const pending = new Set<string>();
+    const running = new Set<string>();
+    let disposed = false;
+    const scanChangedFolder = async (folderId: string) => {
+      if (running.has(folderId)) {
+        pending.add(folderId);
+        return;
+      }
+      running.add(folderId);
+      try {
+        do {
+          pending.delete(folderId);
+          const current = libraryRef.current;
+          const folder = current.folders.find((item) => item.id === folderId);
+          if (!folder || disposed) return;
+          const scanned = await window.playhead.scanFolder(
+            folder,
+            current.settings.library.enabledAudioExtensions,
           );
-        })
-        .catch((error) => setError(getErrorMessage(error, "Could not rescan changed folder.")));
+          if (!scanned || disposed) return;
+          const latest = libraryRef.current;
+          await persistLibrary(
+            mergeScannedLibraryState(latest, mergeScannedFolder(latest, scanned), [
+              scanned.folder.id,
+            ]),
+          );
+        } while (pending.has(folderId) && !disposed);
+      } catch (error) {
+        setError(getErrorMessage(error, "Could not rescan changed folder."));
+      } finally {
+        running.delete(folderId);
+      }
+    };
+    const unsubscribe = window.playhead.onFolderChanged((id) => {
+      void scanChangedFolder(id);
     });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
   }, [persistLibrary]);
 
   useEffect(() => {
@@ -3011,15 +3239,18 @@ export function App() {
     wavesurferRef.current = wavesurfer;
     regionsRef.current = regions;
     minimapRef.current = minimap;
+    const restoreProgressRendering = limitWaveformProgressRendering(wavesurfer.getRenderer());
+    audioEngineRef.current = new PlaybackAudioEngine(wavesurfer.getMediaElement());
     volumeControllerRef.current?.setBaseVolume(volumeRef.current);
     setIsWaveformEngineReady(true);
     const unsubscribers = [
       wavesurfer.on("ready", (nextDuration) => {
         setDuration(nextDuration || 0);
-        setCurrentTime(wavesurfer.getCurrentTime());
+        playbackClock.setTime(wavesurfer.getCurrentTime());
+        updateMediaPosition(nextDuration, wavesurfer.getCurrentTime());
       }),
       wavesurfer.on("timeupdate", (time) => {
-        setCurrentTime(time);
+        playbackClock.setTime(time);
 
         // Loop: jump back to loop start when reaching loop end
         if (loopRegionRef.current && loopRegionRef.current.start < loopRegionRef.current.end) {
@@ -3058,12 +3289,15 @@ export function App() {
         if (payload) void window.playhead.scrobbleLastfmTrack(payload).then(setLastfmState);
       }),
       wavesurfer.on("seeking", (time) => {
-        setCurrentTime(time);
+        playbackClock.setTime(time);
+        updateMediaPosition(wavesurfer.getDuration(), time);
         const session = lastfmPlaybackSessionRef.current;
         if (session) lastfmPlaybackSessionRef.current = { ...session, lastTime: time };
       }),
       wavesurfer.on("play", () => {
+        isPlayingRef.current = true;
         setIsPlaying(true);
+        updateMediaPosition(wavesurfer.getDuration(), wavesurfer.getCurrentTime());
         const track = activeTrackRef.current;
         if (!track || !lastfmSettingsRef.current.scrobblingEnabled) return;
         if (lastfmPlaybackSessionRef.current?.trackId !== track.id) {
@@ -3079,23 +3313,42 @@ export function App() {
         lastfmNowPlayingTrackIdRef.current = track.id;
         void window.playhead.updateLastfmNowPlaying(payload).then(setLastfmState);
       }),
-      wavesurfer.on("pause", () => setIsPlaying(false)),
+      wavesurfer.on("pause", () => {
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+        updateMediaPosition(wavesurfer.getDuration(), wavesurfer.getCurrentTime());
+      }),
       wavesurfer.on("finish", () => {
         if (activeTrackIdRef.current) clearTrackPositionRef.current(activeTrackIdRef.current);
         lastfmPlaybackSessionRef.current = null;
         if (!playNextTrackOnEndRef.current()) setIsPlaying(false);
       }),
-      wavesurfer.on("error", () => {
-        setError("This track could not be loaded.");
-        setHasWaveform(false);
-        setShouldAnimateWaveform(false);
-        setIsLoadingTrack(false);
+      wavesurfer.on("error", (error) => {
+        if (playbackStatusRef.current.loading || error?.name === "AbortError") return;
+        const track = activeTrackRef.current;
+        if (!track || loadedTrackIdRef.current !== track.id) return;
+        const time = wavesurfer.getCurrentTime();
+        const autoplay = isPlayingRef.current;
+        loadedTrackIdRef.current = null;
+        wavesurfer.pause();
+        setIsPlaying(false);
+        if (!isSoundCloudTrack(track) && !playbackStatusRef.current.copied) {
+          recoverPlaybackRef.current(track, time, autoplay);
+        } else {
+          setPlaybackError(playbackFailure(error));
+          setIsLoadingTrack(false);
+        }
       }),
     ];
 
     return () => {
+      playbackAbortRef.current?.abort();
       destroyHls();
       unsubscribers.forEach((unsubscribe) => unsubscribe());
+      restoreProgressRendering();
+      audioEngineRef.current?.dispose();
+      audioEngineRef.current = null;
+      setIsAudioGraphActive(false);
       minimap.destroy();
       minimapRef.current = null;
       regions.destroy();
@@ -3104,7 +3357,7 @@ export function App() {
       wavesurferRef.current = null;
       setIsWaveformEngineReady(false);
     };
-  }, [destroyHls, waveformElement]);
+  }, [destroyHls, playbackClock, waveformElement]);
 
   const playbackQueue = usePlaybackQueue({
     library,
@@ -3167,9 +3420,11 @@ export function App() {
     navigator.mediaSession.playbackState = isPlaying ? "playing" : activeTrack ? "paused" : "none";
   }, [activeTrack, isPlaying]);
 
+  // The OS extrapolates the position from the last update, so it only needs refreshing when
+  // playback starts, pauses, seeks or the track changes.
   useEffect(() => {
-    updateMediaPosition(duration, currentTime);
-  }, [currentTime, duration]);
+    updateMediaPosition(duration, playbackClock.getTime());
+  }, [duration, playbackClock]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -3186,7 +3441,7 @@ export function App() {
       const wavesurfer = wavesurferRef.current;
       if (!wavesurfer || typeof details.seekTime !== "number") return;
       wavesurfer.setTime(details.seekTime);
-      setCurrentTime(wavesurfer.getCurrentTime());
+      playbackClock.setTime(wavesurfer.getCurrentTime());
     });
     setMediaActionHandler("seekbackward", (details) => {
       seekBy(-(details.seekOffset || 10));
@@ -3204,7 +3459,7 @@ export function App() {
       setMediaActionHandler("seekbackward", null);
       setMediaActionHandler("seekforward", null);
     };
-  }, [isPlaying, playAdjacentTrack, seekBy, togglePlayback]);
+  }, [isPlaying, playAdjacentTrack, playbackClock, seekBy, togglePlayback]);
 
   const selectedSource = library.selectedSource;
   const selectedSourceScrollKey = getSourceScrollKey(selectedSource);
@@ -3237,6 +3492,7 @@ export function App() {
           reduceMotion ? "reduce-motion" : ""
         }`}
       >
+        {scanId && <LibraryScanStatus key={scanId} scanId={scanId} />}
         <section
           className="app-shell app-drag relative flex size-full gap-4 overflow-hidden p-4"
           style={{ "--app-transparency": appTransparency } as React.CSSProperties}
@@ -3268,6 +3524,9 @@ export function App() {
             ) : (
               <Sidebar
                 folders={library.folders}
+                tracks={library.tracks}
+                showSubfolders={library.settings.library.showSubfolders}
+                expandedFolderPaths={library.settings.session.expandedFolderPaths}
                 libraryMode={library.settings.library.mode}
                 artistCount={libraryArtists.length}
                 albumCount={libraryAlbums.length}
@@ -3301,6 +3560,9 @@ export function App() {
                 onRefreshSoundCloud={() => void loadSoundCloudCollections()}
                 onSidebarGroupOrderChange={(sidebarGroupOrder) =>
                   persistSessionSettings({ ...library.settings.session, sidebarGroupOrder })
+                }
+                onExpandedFolderPathsChange={(expandedFolderPaths) =>
+                  persistSessionSettings({ ...library.settings.session, expandedFolderPaths })
                 }
                 onDropTrackToPlaylist={(trackIds, playlist) =>
                   void addTracksToPlaylist(trackIds, playlist)
@@ -3347,6 +3609,14 @@ export function App() {
             ) : (
               <>
                 <Player
+                  playbackError={playbackError}
+                  preparingPlayback={preparingPlayback}
+                  onRetryPlayback={() => {
+                    if (activeTrack)
+                      void selectTrack(activeTrack, true, playbackClock.getTime(), false);
+                  }}
+                  lyricsOpen={lyricsOpen}
+                  onToggleLyrics={() => setLyricsOpen((open) => !open)}
                   activeTrack={activeTrack}
                   activeTags={activeTags}
                   isPlaying={isPlaying}
@@ -3355,7 +3625,7 @@ export function App() {
                   shouldAnimateWaveform={shouldAnimateWaveform}
                   reduceMotion={reduceMotion}
                   isFavorite={activeTrack ? favoriteTrackSet.has(activeTrack.id) : false}
-                  currentTime={currentTime}
+                  playbackClock={playbackClock}
                   duration={duration}
                   waveformRef={setWaveformElement}
                   onTogglePlayback={togglePlayback}
@@ -3400,7 +3670,30 @@ export function App() {
                     }
                   }}
                   onTrackInfoContextMenu={setPlayerTrackMenuPoint}
+                  maxVolume={maxVolume}
+                  volumeBoostEnabled={volumeBoostEnabled}
+                  limiterActive={limiterActive}
+                  equalizer={equalizer}
+                  levelsOpen={levelMeters.open}
+                  onToggleLevels={toggleLevelMeters}
+                  levels={
+                    <LevelsPanel
+                      open={levelMeters.open}
+                      isPlaying={isPlaying}
+                      reduceMotion={reduceMotion}
+                      readLevels={readLevels}
+                      onMeteringChange={setMeteringEnabled}
+                    />
+                  }
+                  onEqualizerPreview={previewEqualizer}
+                  onEqualizerChange={changeEqualizer}
                   onVolumeChange={setPlayerVolume}
+                  onVolumeBoostChange={(enabled) =>
+                    void updatePlaybackSettings({
+                      ...library.settings.playback,
+                      volumeBoostEnabled: enabled,
+                    })
+                  }
                   pitchPercent={pitchPercent}
                   pitchMode={pitchMode}
                   onPitchChange={setPlayerPitch}
@@ -3467,7 +3760,16 @@ export function App() {
                   />
                 )}
 
-                {selectedSource?.type === "library-artists" ? (
+                {lyricsOpen ? (
+                  <LyricsPanel
+                    key={activeTrack?.id || "empty"}
+                    track={activeTrack}
+                    clock={playbackClock}
+                    reduceMotion={reduceMotion}
+                    onSeek={seekToLyric}
+                    onClose={closeLyrics}
+                  />
+                ) : selectedSource?.type === "library-artists" ? (
                   <LibraryBrowser
                     emptyLabel="No artists to show."
                     artists={libraryArtists}
@@ -3528,6 +3830,13 @@ export function App() {
                     )}
                     <TrackList
                       tracks={tracks}
+                      settings={trackListSettings}
+                      onSettingsChange={(trackList) =>
+                        persistSessionSettings({
+                          ...libraryRef.current.settings.session,
+                          trackList,
+                        })
+                      }
                       activeTrackId={activeTrackId}
                       isPlaying={isPlaying}
                       selectedTrackIds={selectedTrackIds}

@@ -1,3 +1,10 @@
+import type { LibraryScanProgress, LibraryScanRequest, LibraryScanResult } from "./library-scan";
+import type { PlaybackCopyResult } from "./playback";
+import type { TrackLyrics } from "./lyrics";
+import { defaultTrackListSettings, type TrackListSettings } from "./track-list";
+
+export const libraryTrackMetadataVersion = 1;
+
 export type LibraryMode = "folder" | "library";
 
 export type SourceType =
@@ -38,6 +45,7 @@ export type LibraryFolder = {
   name: string;
   path: string;
   trackIds: string[];
+  metadataVersion?: number;
 };
 
 export type CuePoint = {
@@ -57,10 +65,13 @@ export type LibraryTrack = {
   artist: string;
   album?: string;
   albumArtist?: string;
+  genre?: string;
+  composer?: string;
+  disc?: string;
+  metadataVersion?: number;
   trackNumber?: number;
   diskNumber?: number;
   year?: number;
-  genre?: string;
   artwork?: LibraryArtwork;
   duration: number;
   audioFormat?: string;
@@ -181,6 +192,7 @@ export type LibraryTag = {
 export type SelectedSource = {
   type: SourceType;
   id?: string;
+  path?: string;
 };
 
 export type PlaybackQueueSource = {
@@ -227,9 +239,24 @@ export type LibrarySettings = {
   enabledAudioExtensions: string[];
   watchFolders: boolean;
   rescanOnLaunch: boolean;
+  showSubfolders: boolean;
 };
 
 export type PitchMode = "key-lock" | "vinyl";
+
+export type EqualizerPresetId = "flat" | "quiet" | "bass" | "vocal" | "custom";
+
+export type QuietListeningStrength = "light" | "medium" | "strong";
+
+export type EqualizerSettings = {
+  enabled: boolean;
+  preset: EqualizerPresetId;
+  strength: QuietListeningStrength;
+  preampDb: number;
+  gainsDb: number[];
+  customGainsDb: number[];
+  customPreampDb: number;
+};
 
 export type PlaybackSettings = {
   seekStepSeconds: number;
@@ -240,6 +267,8 @@ export type PlaybackSettings = {
   skipUnavailableTracks: boolean;
   pitchPercent: number;
   pitchMode: PitchMode;
+  volumeBoostEnabled: boolean;
+  equalizer: EqualizerSettings;
 };
 
 export type AppearanceSettings = {
@@ -263,6 +292,10 @@ export type SoundCloudSettings = {
 
 export type SidebarGroupId = "library" | "playlists" | "tags" | "soundcloud";
 
+export type LevelMeterSettings = {
+  open: boolean;
+};
+
 export type SessionSettings = {
   activeTrackId: string | null;
   selectedTrackIds: string[];
@@ -270,11 +303,14 @@ export type SessionSettings = {
   shuffleEnabled: boolean;
   repeatMode: "off" | "all" | "one";
   sidebarGroupOrder: SidebarGroupId[];
-  queue: PlaybackQueue;
   loopActive: boolean;
   loopStart: number;
   loopEnd: number;
   loopBeats: number;
+  expandedFolderPaths: string[];
+  levelMeters: LevelMeterSettings;
+  trackList: TrackListSettings;
+  queue: PlaybackQueue;
 };
 
 export type ScannedFolder = {
@@ -359,13 +395,22 @@ export type BpmCacheEntry = {
 export type BpmCacheWrite = BpmCacheRequest & BpmCacheEntry;
 
 export type PlayheadApi = {
+  scanLibrary: (request: LibraryScanRequest) => Promise<LibraryScanResult>;
+  cancelLibraryScan: (id: string) => Promise<void>;
+  onLibraryScanProgress: (callback: (progress: LibraryScanProgress) => void) => () => void;
+  preparePlaybackCopy: (path: string, requestId: number) => Promise<PlaybackCopyResult>;
+  cancelPlaybackCopy: (requestId: number) => Promise<void>;
+  getTrackLyrics: (trackId: string) => Promise<TrackLyrics>;
+  selectTrackLyrics: (trackId: string, filePath?: string | null) => Promise<TrackLyrics | null>;
+  watchTrackLyrics: (trackId: string | null) => Promise<void>;
+  onLyricsChanged: (callback: (trackId: string) => void) => () => void;
   getAppVersion: () => Promise<string>;
   getLibraryState: () => Promise<LibraryState>;
-  saveLibraryState: (state: LibraryState) => Promise<LibraryState>;
-  saveLibrarySessionSettings: (session: SessionSettings) => Promise<LibraryState>;
-  saveLibraryTrackAnalysis: (trackId: string, bpm: number) => Promise<LibraryState>;
-  saveLibraryCuePoints: (trackId: string, cuePoints: CuePoint[]) => Promise<LibraryState>;
-  saveLibrarySelectedSource: (selectedSource: SelectedSource | null) => Promise<LibraryState>;
+  saveLibraryState: (state: LibraryState) => Promise<void>;
+  saveLibrarySessionSettings: (session: SessionSettings) => Promise<void>;
+  saveLibraryTrackAnalysis: (trackId: string, bpm: number) => Promise<void>;
+  saveLibraryCuePoints: (trackId: string, cuePoints: CuePoint[]) => Promise<void>;
+  saveLibrarySelectedSource: (selectedSource: SelectedSource | null) => Promise<void>;
   selectMusicFolder: (extensions?: string[]) => Promise<ScannedFolder[]>;
   scanFolder: (folder: LibraryFolder, extensions?: string[]) => Promise<ScannedFolder>;
   scanFolders: (folders: LibraryFolder[], extensions?: string[]) => Promise<ScannedFolder[]>;
@@ -458,6 +503,19 @@ export const defaultLibrarySettings = (): LibrarySettings => ({
   ],
   watchFolders: true,
   rescanOnLaunch: false,
+  showSubfolders: false,
+});
+
+export const equalizerBandCount = 10;
+
+export const defaultEqualizerSettings = (): EqualizerSettings => ({
+  enabled: false,
+  preset: "flat",
+  strength: "medium",
+  preampDb: 0,
+  gainsDb: Array.from({ length: equalizerBandCount }, () => 0),
+  customGainsDb: Array.from({ length: equalizerBandCount }, () => 0),
+  customPreampDb: 0,
 });
 
 export const defaultPlaybackSettings = (): PlaybackSettings => ({
@@ -469,6 +527,8 @@ export const defaultPlaybackSettings = (): PlaybackSettings => ({
   skipUnavailableTracks: true,
   pitchPercent: 0,
   pitchMode: "key-lock",
+  volumeBoostEnabled: false,
+  equalizer: defaultEqualizerSettings(),
 });
 
 export const defaultAppearanceSettings = (): AppearanceSettings => ({
@@ -477,7 +537,7 @@ export const defaultAppearanceSettings = (): AppearanceSettings => ({
 });
 
 export const defaultTelemetrySettings = (): TelemetrySettings => ({
-  enabled: false,
+  enabled: true,
 });
 
 export const defaultLastfmSettings = (): LastfmSettings => ({
@@ -497,6 +557,13 @@ export const defaultSessionSettings = (): SessionSettings => ({
   shuffleEnabled: false,
   repeatMode: "off",
   sidebarGroupOrder: ["library", "playlists", "tags", "soundcloud"],
+  loopActive: false,
+  loopStart: 0,
+  loopEnd: 0,
+  loopBeats: 4,
+  expandedFolderPaths: [],
+  levelMeters: { open: false },
+  trackList: defaultTrackListSettings(),
   queue: {
     items: [],
     shuffledItems: [],
@@ -504,10 +571,6 @@ export const defaultSessionSettings = (): SessionSettings => ({
     source: null,
     panelOpen: false,
   },
-  loopActive: false,
-  loopStart: 0,
-  loopEnd: 0,
-  loopBeats: 4,
 });
 
 export const defaultAppSettings = (): AppSettings => ({

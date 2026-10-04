@@ -164,14 +164,14 @@ export function usePlayerKeyboardShortcuts({
     onOpenSettings,
     onPitchChange,
     onPlaySelectedTrack,
-    onToggleLoop,
-    onSetCuePoint,
-    onJumpToCuePoint,
     onSeekBy,
     onSelectAdjacentTrack,
+    onToggleLoop,
     onToggleQueue,
     onTogglePlayback,
     onToggleSelectedTrackFavorite,
+    onSetCuePoint,
+    onJumpToCuePoint,
     playbackSettings,
   ]);
 }

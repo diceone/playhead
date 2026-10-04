@@ -1,5 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { formatTime } from "@/lib/format";
+import type { TrackColumnId } from "../../../../shared/track-list";
+import { formatTrackColumn, trackColumns } from "./track-columns";
+import { NowPlayingBars } from "@/features/player/NowPlayingBars";
 import type { MenuAnchorPoint } from "@/lib/menu-position";
 import type { LibraryPlaylist, LibraryTag, LibraryTrack } from "../../../../shared/library";
 import { FavoriteHeartButton } from "./FavoriteHeartButton";
@@ -9,6 +11,8 @@ import { TrackRowMenu } from "./TrackRowMenu";
 
 type TrackListRowProps = {
   track: LibraryTrack;
+  columns: TrackColumnId[];
+  gridTemplateColumns: string;
   index: number;
   activeTrackId: string | null;
   isPlaying: boolean;
@@ -54,6 +58,8 @@ type TrackListRowProps = {
 
 export function TrackListRow({
   track,
+  columns,
+  gridTemplateColumns,
   index,
   activeTrackId,
   isPlaying,
@@ -95,6 +101,9 @@ export function TrackListRow({
   const isRemoteTrack = track.source === "soundcloud";
   return (
     <TrackCell
+      role="row"
+      className="!grid gap-2"
+      style={{ gridTemplateColumns }}
       draggable
       trackId={track.id}
       selected={selected}
@@ -114,30 +123,46 @@ export function TrackListRow({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-3 pr-6">
+      <div role="cell">
         <TrackNumberOrIndicator
           index={index}
           active={activeTrackId === track.id}
           isPlaying={isPlaying}
         />
-        <TrackArtwork track={track} fallbackIcon={artworkFallbackIcon} />
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-semibold leading-[1.18]">{track.title}</p>
-          <p className="mt-0.5 truncate text-[13px] font-medium leading-[1.25] text-muted-foreground">
-            {track.artist}
-          </p>
-        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-4 text-[13px] font-medium tabular-nums text-muted-foreground">
-        {track.genre && (
-          <span className="hidden max-w-[120px] truncate text-[12px] font-normal sm:inline">
-            {track.genre}
-          </span>
-        )}
-        {track.bpm != null && track.bpm > 0 && (
-          <span className="hidden text-[12px] font-normal sm:inline">{Math.round(track.bpm)} BPM</span>
-        )}
-        <span>{formatTime(track.duration)}</span>
+      {columns.map((column) =>
+        column === "title" ? (
+          <div key={column} role="cell" className="flex min-w-0 items-center gap-3">
+            <TrackArtwork track={track} fallbackIcon={artworkFallbackIcon} />
+            <div className="min-w-0">
+              <p className="truncate text-[14px] font-semibold leading-[1.18]" title={track.title}>
+                {track.title}
+              </p>
+              {!columns.includes("artist") && (
+                <p
+                  className="mt-0.5 truncate text-[13px] font-medium leading-[1.25] text-muted-foreground"
+                  title={track.artist}
+                >
+                  {track.artist}
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div
+            key={column}
+            role="cell"
+            title={formatTrackColumn(track, column)}
+            className={`min-w-0 truncate text-[13px] font-medium text-muted-foreground ${trackColumns[column].numeric ? "text-right tabular-nums" : ""}`}
+          >
+            {formatTrackColumn(track, column)}
+          </div>
+        ),
+      )}
+      <div
+        role="cell"
+        className="flex shrink-0 items-center justify-end gap-4 text-[13px] font-medium text-muted-foreground"
+      >
         <FavoriteHeartButton
           active={favorite}
           tooltipSide="top"
@@ -221,17 +246,9 @@ function TrackNumberOrIndicator({
 
 function ActiveTrackIndicator() {
   return (
-    <span className="flex size-4 items-center justify-center gap-[1.5px] text-primary">
-      {[5, 10, 7, 13].map((height, index) => (
-        <span
-          key={index}
-          className="w-[2px] animate-[active-waveform_2.18s_ease-in-out_infinite] rounded-full bg-current"
-          style={{
-            height,
-            animationDelay: `${[0.22, 0, 0.33, 0.11][index]}s`,
-          }}
-        />
-      ))}
-    </span>
+    <NowPlayingBars
+      heights={[5, 10, 7, 13]}
+      className="flex size-4 items-center justify-center gap-[1.5px] text-primary"
+    />
   );
 }
