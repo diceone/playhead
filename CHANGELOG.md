@@ -37,6 +37,15 @@
 - SoundCloud and Last.fm could sign you out when many requests ran at once.
 - A SoundCloud sign-in that never completed could get stuck; it can now be cancelled and expires on its own.
 
+### Fork (diceone) additions
+
+- **Pitch control:** ±16% pitch bend with Key-Lock (preserved pitch) and Vinyl mode, combinable with playback speed.
+- **Cue points:** up to 8 numbered cue points per track (Cue row on the waveform, click to jump, save to session).
+- **Beat loop:** loop the last N beats (1/2/4/8/16) via Shift+drag region or loop row.
+- **Waveform minimap** below the player plus zoom controls.
+- **Genre and BPM columns** in the track list, with folder-based BPM/key detection.
+- **Settings**: per-track pitch, loop and cue points are restored with the last session.
+
 ## 0.2.7
 
 - Fixed “Install update and restart” hiding the window instead of restarting Playhead.
