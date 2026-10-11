@@ -94,6 +94,9 @@ jobs:
             script: dist:linux
             artifact: linux
     runs-on: ${{ matrix.os }}
+    env:
+      HAS_MAC_CERT: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_ID != '' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -104,7 +107,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Import macOS signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.HAS_MAC_CERT == 'true'
         shell: bash
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -135,8 +138,9 @@ jobs:
           POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
           POSTHOG_HOST: ${{ vars.POSTHOG_HOST || 'https://eu.i.posthog.com' }}
           PLAYHEAD_INTEGRATIONS_BROKER_URL: ${{ vars.PLAYHEAD_INTEGRATIONS_BROKER_URL }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.HAS_MAC_CERT == 'true' && 'true' || 'false' }}
       - name: Notarize and staple DMG
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.HAS_NOTARY == 'true'
         shell: bash
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -161,7 +165,7 @@ jobs:
             spctl --assess --type open --context context:primary-signature --verbose "$dmg"
           done
       - name: Refresh notarized DMG metadata
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.HAS_NOTARY == 'true'
         shell: bash
         run: |
           node <<'NODE'
