@@ -9,6 +9,7 @@ import {
   defaultTelemetrySettings,
   type AppearanceSettings,
   type LastfmSettings,
+  type DiscordSettings,
   type LastfmState,
   type LibraryFolder,
   type LibrarySettings,
@@ -70,6 +71,9 @@ export function SettingsDialog({
   soundcloudSettings,
   soundcloudActionPending,
   onLastfmSettingsChange,
+  discordConfigured,
+  discordSettings,
+  onDiscordSettingsChange,
   onStartLastfmAuth,
   onCompleteLastfmAuth,
   onCancelLastfmAuth,
@@ -78,10 +82,12 @@ export function SettingsDialog({
   onSoundCloudSettingsChange,
   onStartSoundCloudAuth,
   onCompleteSoundCloudAuth,
+  onCancelSoundCloudAuth,
   onDisconnectSoundCloud,
   onAdvancedAction,
   batchAnalysis,
   onAnalyzeMissingAudioData,
+  onFindDuplicates,
   onClose,
 }: {
   librarySettings: LibrarySettings;
@@ -105,6 +111,9 @@ export function SettingsDialog({
   soundcloudSettings: SoundCloudSettings;
   soundcloudActionPending: boolean;
   onLastfmSettingsChange: (settings: LastfmSettings) => void;
+  discordConfigured: boolean;
+  discordSettings: DiscordSettings;
+  onDiscordSettingsChange: (settings: DiscordSettings) => void;
   onStartLastfmAuth: () => void;
   onCompleteLastfmAuth: () => void;
   onCancelLastfmAuth: () => void;
@@ -113,6 +122,7 @@ export function SettingsDialog({
   onSoundCloudSettingsChange: (settings: SoundCloudSettings) => void;
   onStartSoundCloudAuth: () => void;
   onCompleteSoundCloudAuth: (input: string) => void;
+  onCancelSoundCloudAuth: () => void;
   onDisconnectSoundCloud: () => void;
   onAdvancedAction: (action: AdvancedSettingsAction) => Promise<string>;
   batchAnalysis: {
@@ -123,6 +133,7 @@ export function SettingsDialog({
     currentTrackTitle: string;
   };
   onAnalyzeMissingAudioData: () => Promise<string>;
+  onFindDuplicates: () => void;
   onClose: () => void;
 }) {
   const icons = useIcons();
@@ -179,7 +190,8 @@ export function SettingsDialog({
     savedPlaybackSettings.skipUnavailableTracks !== draftPlaybackSettings.skipUnavailableTracks;
   const appearanceSettingsChanged =
     savedAppearanceSettings.appTransparency !== draftAppearanceSettings.appTransparency ||
-    savedAppearanceSettings.reduceMotion !== draftAppearanceSettings.reduceMotion;
+    savedAppearanceSettings.reduceMotion !== draftAppearanceSettings.reduceMotion ||
+    savedAppearanceSettings.windowCornerRadius !== draftAppearanceSettings.windowCornerRadius;
   const telemetrySettingsChanged =
     savedTelemetrySettings.enabled !== draftTelemetrySettings.enabled;
   const hasUnsavedChanges =
@@ -211,6 +223,7 @@ export function SettingsDialog({
       secondaryKeys: [`${modifierLabel} F`],
     },
     { action: "Open settings", keys: [`${modifierLabel} ,`] },
+    { action: "Jump to currently playing song", keys: [`${modifierLabel} J`] },
     {
       action: "Seek backward",
       keys: ["←"],
@@ -225,6 +238,16 @@ export function SettingsDialog({
     { action: "Select next track", keys: ["↓"], detail: "Hold Shift to jump 10 tracks." },
     { action: "Play selected track", keys: ["Enter"] },
     { action: "Love selected track", keys: ["L"] },
+    {
+      action: "Add marker",
+      keys: ["M"],
+      detail: "Drops a marker at the playhead. Double-click a marker to rename it.",
+    },
+    {
+      action: "Loop a section",
+      keys: ["Shift", "Drag"],
+      detail: "Drag across the waveform while holding Shift.",
+    },
     {
       action: "Volume up",
       keys: [`${modifierLabel} ↑`],
@@ -526,6 +549,7 @@ export function SettingsDialog({
                 onToggleExtension={toggleExtension}
                 onAddFolder={onAddLibraryFolder}
                 onAnalyzeMissingAudioData={() => void runAudioAnalysis()}
+                onFindDuplicates={onFindDuplicates}
                 onDropFolderPaths={onDropLibraryFolderPaths}
                 onRemoveFolder={onRemoveLibraryFolder}
                 onReset={resetLibrarySettings}
@@ -566,6 +590,9 @@ export function SettingsDialog({
                   x: icons.x,
                 }}
                 onLastfmSettingsChange={onLastfmSettingsChange}
+                discordConfigured={discordConfigured}
+                discordSettings={discordSettings}
+                onDiscordSettingsChange={onDiscordSettingsChange}
                 onConnectLastfm={onStartLastfmAuth}
                 onCompleteLastfmAuth={onCompleteLastfmAuth}
                 onCancelLastfmAuth={onCancelLastfmAuth}
@@ -574,6 +601,7 @@ export function SettingsDialog({
                 onSoundCloudSettingsChange={onSoundCloudSettingsChange}
                 onConnectSoundCloud={onStartSoundCloudAuth}
                 onCompleteSoundCloudAuth={onCompleteSoundCloudAuth}
+                onCancelSoundCloudAuth={onCancelSoundCloudAuth}
                 onDisconnectSoundCloud={onDisconnectSoundCloud}
               />
             ) : (

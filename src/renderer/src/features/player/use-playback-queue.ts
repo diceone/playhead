@@ -31,7 +31,7 @@ export function usePlaybackQueue({
     activeQueueItemId?: string,
   ) => Promise<void>;
   setSelectedTrackIds: React.Dispatch<React.SetStateAction<string[]>>;
-  setScrollToTrackId: React.Dispatch<React.SetStateAction<string | null>>;
+  setScrollToTrackId: (trackId: string | null) => void;
 }) {
   const queue = library.settings.session.queue;
   const items = useMemo(() => getVisibleQueueItems(queue, shuffleEnabled), [queue, shuffleEnabled]);
@@ -61,7 +61,7 @@ export function usePlaybackQueue({
       updateQueue({ ...queue, activeItemId: item.id });
       setSelectedTrackIds([track.id]);
       setScrollToTrackId(track.id);
-      void selectTrack(track, true, 0, false, "preserve", item.id);
+      void selectTrack(track, true, undefined, false, "preserve", item.id);
     },
     [tracksById, queue, selectTrack, setScrollToTrackId, setSelectedTrackIds, updateQueue],
   );

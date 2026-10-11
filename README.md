@@ -27,6 +27,10 @@
   <a href="https://github.com/edinabazi/playhead/releases/latest/download/Playhead-linux-x64.tar.gz">Linux tar.gz</a>
 </p>
 
+<p align="center">
+  <strong>Homebrew</strong>: <code>brew install --cask edinabazi/tap/playhead</code>
+</p>
+
 ---
 
 ## Why Playhead exists
@@ -69,6 +73,12 @@ Playhead supports two display modes, depending on how you like to organize your 
 
 **Folder mode** keeps your imported folders visible as the main structure. This is useful for DJs, producers, download folders, exports, set prep, samples, references, and messy real-world music libraries.
 
+### Metadata columns and sorting
+
+Use the **Choose columns** icon at the right of the track list header (or right-click any heading) to show Artist, Album, Album artist, Genre, Disc, Track no., Year, Composer, BPM, or Time. Click a column heading to sort; click again to reverse it. Column choices and sorting are remembered across launches. Text stored in the Disc tag, such as a mood, is preserved and sortable.
+
+**Reset sort** in the column picker restores the original source order and enables manual folder or playlist reordering again. Starting playback from a sorted list uses that order for the new queue. Existing libraries refresh their cached metadata on first launch after this update.
+
 ### Local-first playback
 
 Playhead plays audio directly from your machine. Your files stay on disk, and your library state is stored locally.
@@ -87,6 +97,26 @@ Supported formats include:
 ### Waveform-based player
 
 Playhead generates and caches waveform data for local audio files, giving you a quick visual sense of the track while you listen.
+
+### Large libraries
+
+Folder imports and rescans run in a background worker, without a fixed file-count or folder-count limit. A compact progress card shows discovery and metadata-reading progress, with a **Cancel** button. Cancelling or failing a scan leaves the existing library unchanged; imports are applied after the scan completes. Unchanged files reuse their cached metadata on subsequent scans.
+
+Disk activity is bounded, and track, artist, and album lists render only the visible rows. macOS and Windows use native recursive folder notifications where available, avoiding a separate watcher for every audio file. Project-folder safeguards remain in place, and scans do not follow directory symlinks.
+
+### Network and external drives
+
+If direct playback fails, Playhead tries a temporary local copy before reporting an error. Copies stay on disk, are reused while the source is unchanged, and are removed when the app quits. Retained copies are limited to two tracks and 512 MB, with room for a single larger recording.
+
+If the source still can't be read, the waveform area shows the problem and a **Retry** button. Reconnect the drive or restore access, then retry. Switching tracks cancels pending recovery; seeking and paused playback are preserved when a loaded track recovers.
+
+### Lyrics
+
+Open **Lyrics** beside the player's level-meter button to read embedded lyrics or a matching `.lrc` file (for example, `Song.lrc` beside `Song.flac`). The waveform and playback controls stay available above the lyrics.
+
+Timed lyrics follow playback. Click a line to seek, scroll to browse freely, then choose **Follow playback** to resume. Untimed lyrics display as normal text. Reduced Motion also applies to lyric scrolling.
+
+Drop an `.lrc` file into the lyrics view or use **Lyrics options → Choose lyrics file…** to associate one with the current local track. Selections persist between launches; **Use automatic lyrics** restores matching-file/embedded detection. File edits refresh automatically while the view is open. Lyrics stay local; Playhead does not search or download them online.
 
 ### Metadata editing
 
@@ -169,6 +199,15 @@ Start the app in development:
 ```bash
 npm run dev
 ```
+
+The renderer hot-reloads. Changes to the main process or preload script rebuild and restart
+the app, which stops playback.
+
+To show the playing track as Discord status, create an application in the
+[Discord Developer Portal](https://discord.com/developers/applications) and set its
+application ID as `DISCORD_CLIENT_ID` in `.env`. The ID is public, so release builds embed it.
+Upload an image named `playhead` under Rich Presence → Art Assets to show it for local
+files. Without an ID, the Discord setting is hidden.
 
 Run checks:
 
@@ -261,16 +300,6 @@ npm run lint
 npm test
 npm run build
 ```
-
-## Roadmap ideas
-
-- Better waveform performance and caching
-- More metadata format coverage
-- More keyboard-first workflows
-- Better playlist and crate-style organization
-- Improved folder-mode filtering
-- More polished macOS packaging
-- Windows and Linux support
 
 If you have any feature requests or bugs to report, please feel free to open an issue.
 

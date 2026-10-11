@@ -5,10 +5,12 @@ already have a matching Git tag.
 
 ## Version Flow
 
-1. Update `package.json` and `package-lock.json` to the next version.
+1. Update `package.json` and `package-lock.json` to the next version, add a matching `## <version>`
+   entry to `CHANGELOG.md`, and update the in-app notes in `update-messages.tsx`.
 2. Merge or push that change to `main`.
-3. GitHub Actions runs lint, tests, typecheck, and macOS builds.
-4. The workflow creates a draft GitHub Release tagged `v<version>`.
+3. GitHub Actions runs lint, tests, typecheck, and macOS, Windows, and Linux builds.
+4. The workflow creates a draft GitHub Release tagged `v<version>`, using that version's changelog
+   entry as its release notes. Rebuilding an existing tag keeps its published notes.
 5. Review the draft release notes and assets, then publish it.
 
 Published releases are required for in-app updates. Installed apps check the GitHub release feed,
@@ -20,7 +22,7 @@ install.
 - macOS Apple Silicon: `Playhead-mac-arm64.dmg` and `Playhead-mac-arm64.zip`
 - macOS Intel: `Playhead-mac-x64.dmg` and `Playhead-mac-x64.zip`
 - Windows Intel/AMD: `Playhead-win-x64.exe` and `Playhead-win-x64.zip`
-- Linux Intel/AMD: `Playhead-linux-x64.AppImage`, `Playhead-linux-x64.deb`, and
+- Linux Intel/AMD: `Playhead-linux-x86_64.AppImage`, `Playhead-linux-amd64.deb`, and
   `Playhead-linux-x64.tar.gz`
 
 macOS release builds are signed and notarized when the required Apple Developer secrets are present
@@ -42,6 +44,8 @@ wait for the **Update** button.
 - `POSTHOG_PROJECT_API_KEY`: optional. This is baked into the main-process bundle during CI builds.
   If it is missing, release builds still work and in-app telemetry cannot send events.
 - `POSTHOG_HOST`: optional repository variable. Defaults to `https://eu.i.posthog.com`.
+- `HOMEBREW_TAP_DEPLOY_KEY`: private half of a write deploy key on `edinabazi/homebrew-tap`. Publishing a
+  release runs `.github/workflows/homebrew.yml`, which points `Casks/playhead.rb` at the new version.
 - `PLAYHEAD_INTEGRATIONS_BROKER_URL`: repository variable for the secure Last.fm/SoundCloud broker.
   Production builds must use this URL instead of bundling provider secrets.
 
@@ -78,8 +82,8 @@ Stable download URLs:
 https://github.com/edinabazi/playhead/releases/latest/download/Playhead-mac-arm64.dmg
 https://github.com/edinabazi/playhead/releases/latest/download/Playhead-mac-x64.dmg
 https://github.com/edinabazi/playhead/releases/latest/download/Playhead-win-x64.exe
-https://github.com/edinabazi/playhead/releases/latest/download/Playhead-linux-x64.AppImage
-https://github.com/edinabazi/playhead/releases/latest/download/Playhead-linux-x64.deb
+https://github.com/edinabazi/playhead/releases/latest/download/Playhead-linux-x86_64.AppImage
+https://github.com/edinabazi/playhead/releases/latest/download/Playhead-linux-amd64.deb
 ```
 
 ## Local Builds

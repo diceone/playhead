@@ -15,12 +15,17 @@ import {
 } from "./equalizer";
 import { EqualizerBandSlider, EqualizerCurve } from "./EqualizerControls";
 
+const playbackRates = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2];
+
 export function SoundPanel({
   open,
   id,
   extraHeaderHeight = 0,
   equalizer,
   volumeBoostEnabled,
+  playbackRate,
+  preservePitch,
+  onPlaybackRateChange,
   onEqualizerPreview,
   onEqualizerChange,
   onVolumeBoostChange,
@@ -30,6 +35,9 @@ export function SoundPanel({
   extraHeaderHeight?: number;
   equalizer: EqualizerSettings;
   volumeBoostEnabled: boolean;
+  playbackRate: number;
+  preservePitch: boolean;
+  onPlaybackRateChange: (playbackRate: number, preservePitch: boolean) => void;
   onEqualizerPreview: (equalizer: EqualizerSettings) => void;
   onEqualizerChange: (equalizer: EqualizerSettings) => void;
   onVolumeBoostChange: (enabled: boolean) => void;
@@ -64,8 +72,8 @@ export function SoundPanel({
           onKeyDown={(event) => {
             if (event.key !== "Escape") event.stopPropagation();
           }}
-          className="no-drag absolute left-0 top-full z-50 mt-2 w-[min(470px,calc(100vw-340px))] overflow-y-auto overscroll-contain rounded-[22px] border border-white/10 bg-[rgba(10,10,10,0.96)] p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-          style={{ maxHeight: `calc(100dvh - ${300 + extraHeaderHeight}px)` }}
+          className="no-drag absolute right-0 top-full z-50 mt-2 w-[min(470px,calc(100vw-340px))] overflow-y-auto overscroll-contain rounded-[22px] border border-white/10 bg-[rgba(10,10,10,0.96)] p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+          style={{ maxHeight: `calc(100dvh - ${200 + extraHeaderHeight}px)` }}
           initial={{ opacity: 0, y: -6, scale: 0.98 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -4, scale: 0.98 }}
@@ -190,6 +198,36 @@ export function SoundPanel({
               aria-label="Volume boost"
               onCheckedChange={onVolumeBoostChange}
             />
+          </div>
+
+          <div className="mt-4 border-t border-white/[0.08] pt-3">
+            <div className="flex items-center justify-between gap-4">
+              <h4 className="text-[13px] font-semibold leading-5 text-foreground">Speed</h4>
+              <label className="flex items-center gap-2 text-[12px] font-medium text-muted-foreground">
+                Keep pitch
+                <Switch
+                  checked={preservePitch}
+                  aria-label="Keep pitch"
+                  onCheckedChange={(checked) => onPlaybackRateChange(playbackRate, checked)}
+                />
+              </label>
+            </div>
+            <div className="mt-2 flex rounded-full bg-white/[0.06] p-1">
+              {playbackRates.map((rate) => (
+                <button
+                  key={rate}
+                  type="button"
+                  className={`h-7 flex-1 rounded-full text-[12px] font-medium tabular-nums transition ${
+                    playbackRate === rate
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => onPlaybackRateChange(rate, preservePitch)}
+                >
+                  {rate}×
+                </button>
+              ))}
+            </div>
           </div>
         </motion.div>
       )}

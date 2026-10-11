@@ -6,6 +6,7 @@ import { isMacPlatform } from "@/lib/platform";
 export function usePlayerKeyboardShortcuts({
   playbackSettings,
   onToggleQueue,
+  onRevealPlayingTrack,
   onOpenSearch,
   onOpenSettings,
   onTogglePlayback,
@@ -18,9 +19,11 @@ export function usePlayerKeyboardShortcuts({
   onToggleLoop,
   onSetCuePoint,
   onJumpToCuePoint,
+  onAddMarker,
 }: {
   playbackSettings: PlaybackSettings;
   onToggleQueue: () => void;
+  onRevealPlayingTrack: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onTogglePlayback: () => void;
@@ -33,6 +36,7 @@ export function usePlayerKeyboardShortcuts({
   onToggleLoop: () => void;
   onSetCuePoint: (index: number) => void;
   onJumpToCuePoint: (index: number) => void;
+  onAddMarker?: () => void;
 }) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -48,6 +52,11 @@ export function usePlayerKeyboardShortcuts({
       }
 
       const primaryModifier = isMacPlatform() ? event.metaKey : event.ctrlKey;
+      if (primaryModifier && event.key.toLowerCase() === "j" && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        onRevealPlayingTrack();
+        return;
+      }
       if (primaryModifier && event.key.toLowerCase() === "l") {
         event.preventDefault();
         onToggleQueue();
@@ -153,12 +162,25 @@ export function usePlayerKeyboardShortcuts({
       if (event.key.toLowerCase() === "l" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         onToggleSelectedTrackFavorite();
+        return;
+      }
+
+      if (
+        onAddMarker &&
+        event.key.toLowerCase() === "m" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        onAddMarker();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    onAddMarker,
     onChangeVolumeBy,
     onOpenSearch,
     onOpenSettings,
@@ -168,6 +190,7 @@ export function usePlayerKeyboardShortcuts({
     onSelectAdjacentTrack,
     onToggleLoop,
     onToggleQueue,
+    onRevealPlayingTrack,
     onTogglePlayback,
     onToggleSelectedTrackFavorite,
     onSetCuePoint,

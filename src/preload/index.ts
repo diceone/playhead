@@ -11,6 +11,8 @@ import type {
   MediaCommand,
   PlayheadApi,
   SoundCloudCollectionId,
+  DiscordPresence,
+  SoundCloudPlaylistEdit,
   SoundCloudState,
   SoundCloudTranscoding,
   WaveformCacheRequest,
@@ -111,10 +113,36 @@ const api: PlayheadApi = {
     return ipcRenderer.invoke("soundcloud:complete-auth", code, state);
   },
   disconnectSoundCloud: () => ipcRenderer.invoke("soundcloud:disconnect"),
+  cancelSoundCloudAuth: () => ipcRenderer.invoke("soundcloud:cancel-auth"),
   getSoundCloudCollections: (visibleCollections: SoundCloudCollectionId[]) =>
     ipcRenderer.invoke("soundcloud:get-collections", visibleCollections),
   getSoundCloudCollectionTracks: (collectionId: string) =>
     ipcRenderer.invoke("soundcloud:get-collection-tracks", collectionId),
+  searchSoundCloudTracks: (query: string) => ipcRenderer.invoke("soundcloud:search-tracks", query),
+  isDiscordConfigured: () => ipcRenderer.invoke("discord:is-configured"),
+  setDiscordEnabled: (enabled: boolean) => ipcRenderer.invoke("discord:set-enabled", enabled),
+  updateDiscordPresence: (presence: DiscordPresence | null) =>
+    ipcRenderer.invoke("discord:update", presence),
+  getSoundCloudComments: (trackId: number, trackUrn?: string) =>
+    ipcRenderer.invoke("soundcloud:get-comments", trackId, trackUrn),
+  postSoundCloudComment: (
+    trackId: number,
+    trackUrn: string | undefined,
+    body: string,
+    time: number,
+  ) => ipcRenderer.invoke("soundcloud:post-comment", trackId, trackUrn, body, time),
+  getSoundCloudRelatedTracks: (trackId: number, trackUrn?: string) =>
+    ipcRenderer.invoke("soundcloud:get-related-tracks", trackId, trackUrn),
+  createSoundCloudPlaylist: (title: string, trackIds: number[]) =>
+    ipcRenderer.invoke("soundcloud:create-playlist", title, trackIds),
+  renameSoundCloudPlaylist: (collectionId: string, title: string) =>
+    ipcRenderer.invoke("soundcloud:rename-playlist", collectionId, title),
+  deleteSoundCloudPlaylist: (collectionId: string) =>
+    ipcRenderer.invoke("soundcloud:delete-playlist", collectionId),
+  editSoundCloudPlaylist: (collectionId: string, edit: SoundCloudPlaylistEdit) =>
+    ipcRenderer.invoke("soundcloud:edit-playlist", collectionId, edit),
+  setSoundCloudTrackLiked: (trackId: number, trackUrn: string | undefined, liked: boolean) =>
+    ipcRenderer.invoke("soundcloud:set-track-liked", trackId, trackUrn, liked),
   getSoundCloudStreamUrl: (
     trackId: number,
     streamUrl?: string,

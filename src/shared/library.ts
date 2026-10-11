@@ -2,8 +2,9 @@ import type { LibraryScanProgress, LibraryScanRequest, LibraryScanResult } from 
 import type { PlaybackCopyResult } from "./playback";
 import type { TrackLyrics } from "./lyrics";
 import { defaultTrackListSettings, type TrackListSettings } from "./track-list";
+import type { SmartPlaylist } from "./smart-playlist";
 
-export const libraryTrackMetadataVersion = 1;
+export const libraryTrackMetadataVersion = 2;
 
 export type LibraryMode = "folder" | "library";
 
@@ -17,7 +18,8 @@ export type SourceType =
   | "library-artist"
   | "library-albums"
   | "library-album"
-  | "library-tracks";
+  | "library-tracks"
+  | "smart-playlist";
 
 export type TrackSource = "local" | "soundcloud";
 
@@ -80,6 +82,10 @@ export type LibraryTrack = {
   bpm?: number;
   bpmSource?: "metadata" | "analysis";
   cuePoints?: CuePoint[];
+  /** ReplayGain track gain from the file's tags, in dB. */
+  replayGainDb?: number;
+  /** Detected key, e.g. "8A · Am". Filled in from LibraryState.trackKeys for display. */
+  musicalKey?: string;
   folderId: string;
   soundcloud?: {
     id: number;
@@ -196,6 +202,7 @@ export type SelectedSource = {
 };
 
 export type PlaybackQueueSource = {
+  path?: string;
   type: SourceType;
   id?: string;
   title?: string;
@@ -220,8 +227,20 @@ export type LibraryState = {
   playlists: LibraryPlaylist[];
   tags: LibraryTag[];
   favoriteTrackIds: string[];
+  /** User markers per track id, sorted by time. Kept apart from scanned track data. */
+  trackMarkers?: Record<string, TrackMarker[]>;
+  smartPlaylists?: SmartPlaylist[];
+  /** Detected musical keys per track id. Kept apart from scanned track data. */
+  trackKeys?: Record<string, string>;
   selectedSource: SelectedSource | null;
   settings: AppSettings;
+};
+
+export type TrackMarker = {
+  id: string;
+  /** Position in the track, in seconds. */
+  time: number;
+  label: string;
 };
 
 export type AppSettings = {
@@ -231,6 +250,7 @@ export type AppSettings = {
   telemetry: TelemetrySettings;
   lastfm: LastfmSettings;
   soundcloud: SoundCloudSettings;
+  discord: DiscordSettings;
   session: SessionSettings;
 };
 
@@ -269,15 +289,37 @@ export type PlaybackSettings = {
   pitchMode: PitchMode;
   volumeBoostEnabled: boolean;
   equalizer: EqualizerSettings;
+  /** 1 is normal speed. */
+  playbackRate: number;
+  /** Keep the original pitch when the speed changes. */
+  preservePitch: boolean;
 };
 
 export type AppearanceSettings = {
   appTransparency: number;
   reduceMotion: boolean;
+  /** Corner radius of the main window in CSS pixels. */
+  windowCornerRadius: number;
 };
 
 export type TelemetrySettings = {
   enabled: boolean;
+};
+
+export type DiscordSettings = {
+  /** Show the playing track as Discord activity. */
+  enabled: boolean;
+};
+
+/** What Discord shows while a track plays. */
+export type DiscordPresence = {
+  title: string;
+  artist: string;
+  album?: string;
+  durationSeconds: number;
+  positionSeconds: number;
+  /** Public artwork URL; local files fall back to the app's uploaded image. */
+  artworkUrl?: string;
 };
 
 export type LastfmSettings = {
@@ -288,6 +330,14 @@ export type LastfmSettings = {
 export type SoundCloudSettings = {
   enabled: boolean;
   visibleCollections: SoundCloudCollectionId[];
+  /** Mirror hearts on SoundCloud tracks to SoundCloud likes. */
+  likeSyncEnabled: boolean;
+  /** When the queue ends on a SoundCloud track, keep playing similar tracks. */
+  stationEnabled: boolean;
+  /** Show timed comments along the waveform of SoundCloud tracks. */
+  commentsEnabled: boolean;
+  /** Pop up each comment as the playhead passes it. */
+  commentPopupsEnabled: boolean;
 };
 
 export type SidebarGroupId = "library" | "playlists" | "tags" | "soundcloud";
@@ -343,6 +393,22 @@ export type SoundCloudState = {
   pendingAuth: boolean;
   lastError?: string;
 };
+
+export type SoundCloudComment = {
+  id: string;
+  body: string;
+  /** Position in the track, in seconds. */
+  time: number;
+  createdAt?: string;
+  username: string;
+  avatarUrl?: string;
+  userUrl?: string;
+};
+
+export type SoundCloudPlaylistEdit =
+  | { type: "add"; trackIds: number[] }
+  | { type: "remove"; trackIds: number[] }
+  | { type: "move"; trackIds: number[]; targetTrackId: number; edge: "before" | "after" };
 
 export type SoundCloudCollection = {
   id: SoundCloudCollectionId | `playlist:${string}`;
@@ -454,10 +520,35 @@ export type PlayheadApi = {
   startSoundCloudAuth: () => Promise<SoundCloudState>;
   completeSoundCloudAuth: (input: string) => Promise<SoundCloudState>;
   disconnectSoundCloud: () => Promise<SoundCloudState>;
+  cancelSoundCloudAuth: () => Promise<SoundCloudState>;
   getSoundCloudCollections: (
     visibleCollections: SoundCloudCollectionId[],
   ) => Promise<SoundCloudCollection[]>;
   getSoundCloudCollectionTracks: (collectionId: string) => Promise<LibraryTrack[]>;
+  searchSoundCloudTracks: (query: string) => Promise<LibraryTrack[]>;
+  isDiscordConfigured: () => Promise<boolean>;
+  setDiscordEnabled: (enabled: boolean) => Promise<void>;
+  updateDiscordPresence: (presence: DiscordPresence | null) => Promise<void>;
+  getSoundCloudComments: (trackId: number, trackUrn?: string) => Promise<SoundCloudComment[]>;
+  postSoundCloudComment: (
+    trackId: number,
+    trackUrn: string | undefined,
+    body: string,
+    time: number,
+  ) => Promise<SoundCloudComment>;
+  getSoundCloudRelatedTracks: (trackId: number, trackUrn?: string) => Promise<LibraryTrack[]>;
+  createSoundCloudPlaylist: (title: string, trackIds: number[]) => Promise<SoundCloudCollection>;
+  renameSoundCloudPlaylist: (collectionId: string, title: string) => Promise<void>;
+  deleteSoundCloudPlaylist: (collectionId: string) => Promise<void>;
+  editSoundCloudPlaylist: (
+    collectionId: string,
+    edit: SoundCloudPlaylistEdit,
+  ) => Promise<{ changed: number; tracks: LibraryTrack[] }>;
+  setSoundCloudTrackLiked: (
+    trackId: number,
+    trackUrn: string | undefined,
+    liked: boolean,
+  ) => Promise<void>;
   getSoundCloudStreamUrl: (
     trackId: number,
     streamUrl?: string,
@@ -529,11 +620,21 @@ export const defaultPlaybackSettings = (): PlaybackSettings => ({
   pitchMode: "key-lock",
   volumeBoostEnabled: false,
   equalizer: defaultEqualizerSettings(),
+  playbackRate: 1,
+  preservePitch: true,
 });
+
+export const defaultWindowCornerRadius = 49;
+export const windowCornerRadiusOptions = [
+  { label: "Large", value: defaultWindowCornerRadius },
+  { label: "Medium", value: 26 },
+  { label: "Small", value: 12 },
+];
 
 export const defaultAppearanceSettings = (): AppearanceSettings => ({
   appTransparency: 95,
   reduceMotion: false,
+  windowCornerRadius: defaultWindowCornerRadius,
 });
 
 export const defaultTelemetrySettings = (): TelemetrySettings => ({
@@ -548,6 +649,10 @@ export const defaultLastfmSettings = (): LastfmSettings => ({
 export const defaultSoundCloudSettings = (): SoundCloudSettings => ({
   enabled: true,
   visibleCollections: ["playlists"],
+  likeSyncEnabled: false,
+  stationEnabled: false,
+  commentsEnabled: true,
+  commentPopupsEnabled: true,
 });
 
 export const defaultSessionSettings = (): SessionSettings => ({
@@ -580,6 +685,7 @@ export const defaultAppSettings = (): AppSettings => ({
   telemetry: defaultTelemetrySettings(),
   lastfm: defaultLastfmSettings(),
   soundcloud: defaultSoundCloudSettings(),
+  discord: { enabled: false },
   session: defaultSessionSettings(),
 });
 
@@ -589,6 +695,7 @@ export const emptyLibraryState = (): LibraryState => ({
   playlists: [],
   tags: [],
   favoriteTrackIds: [],
+  trackMarkers: {},
   selectedSource: null,
   settings: defaultAppSettings(),
 });

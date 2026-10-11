@@ -3,6 +3,7 @@ import type { IconComponent } from "@/lib/icon-context";
 import { useState } from "react";
 import type {
   LastfmSettings,
+  DiscordSettings,
   LastfmState,
   SoundCloudCollectionId,
   SoundCloudSettings,
@@ -41,7 +42,11 @@ export function IntegrationsSettingsPane({
   onSoundCloudSettingsChange,
   onConnectSoundCloud,
   onCompleteSoundCloudAuth,
+  onCancelSoundCloudAuth,
   onDisconnectSoundCloud,
+  discordConfigured,
+  discordSettings,
+  onDiscordSettingsChange,
 }: {
   lastfmState: LastfmState;
   lastfmSettings: LastfmSettings;
@@ -62,7 +67,11 @@ export function IntegrationsSettingsPane({
   onSoundCloudSettingsChange: (settings: SoundCloudSettings) => void;
   onConnectSoundCloud: () => void;
   onCompleteSoundCloudAuth: (input: string) => void;
+  onCancelSoundCloudAuth: () => void;
   onDisconnectSoundCloud: () => void;
+  discordConfigured: boolean;
+  discordSettings: DiscordSettings;
+  onDiscordSettingsChange: (settings: DiscordSettings) => void;
 }) {
   const LoaderIcon = icons.loader;
   const XIcon = icons.x;
@@ -200,8 +209,19 @@ export function IntegrationsSettingsPane({
         onSettingsChange={onSoundCloudSettingsChange}
         onConnect={onConnectSoundCloud}
         onCompleteAuth={onCompleteSoundCloudAuth}
+        onCancelAuth={onCancelSoundCloudAuth}
         onDisconnect={onDisconnectSoundCloud}
       />
+      {discordConfigured && (
+        <div className="overflow-hidden rounded-[22px] border border-white/10 bg-white/[0.035]">
+          <IntegrationSwitch
+            title="Show in Discord"
+            description="Display the track you're playing as your Discord status while Discord is open."
+            checked={discordSettings.enabled}
+            onCheckedChange={(enabled) => onDiscordSettingsChange({ ...discordSettings, enabled })}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -214,6 +234,7 @@ function SoundCloudIntegrationCard({
   onSettingsChange,
   onConnect,
   onCompleteAuth,
+  onCancelAuth,
   onDisconnect,
 }: {
   state: SoundCloudState;
@@ -223,6 +244,7 @@ function SoundCloudIntegrationCard({
   onSettingsChange: (settings: SoundCloudSettings) => void;
   onConnect: () => void;
   onCompleteAuth: (input: string) => void;
+  onCancelAuth: () => void;
   onDisconnect: () => void;
 }) {
   const disabled = pendingAction || !state.configured;
@@ -278,7 +300,16 @@ function SoundCloudIntegrationCard({
               Connect SoundCloud
             </button>
           )}
-          {!state.connected && state.pendingAuth && null}
+          {!state.connected && state.pendingAuth && (
+            <button
+              type="button"
+              className="h-9 rounded-full px-4 text-[13px] font-medium text-muted-foreground transition hover:bg-white/10 hover:text-foreground active:scale-[0.98] disabled:opacity-45"
+              disabled={pendingAction}
+              onClick={onCancelAuth}
+            >
+              Cancel
+            </button>
+          )}
           {state.connected && (
             <button
               type="button"
@@ -331,6 +362,38 @@ function SoundCloudIntegrationCard({
             checked={settings.enabled}
             onCheckedChange={(enabled) => onSettingsChange({ ...settings, enabled })}
           />
+          <IntegrationSwitch
+            title="Sync likes"
+            description="Loving a SoundCloud track also likes it on SoundCloud, and tracks you've liked there show as loved."
+            checked={settings.likeSyncEnabled}
+            onCheckedChange={(likeSyncEnabled) =>
+              onSettingsChange({ ...settings, likeSyncEnabled })
+            }
+          />
+          <IntegrationSwitch
+            title="Keep playing similar tracks"
+            description="When the queue ends on a SoundCloud track, add related tracks and keep going."
+            checked={settings.stationEnabled}
+            onCheckedChange={(stationEnabled) => onSettingsChange({ ...settings, stationEnabled })}
+          />
+          <IntegrationSwitch
+            title="Show comments on the waveform"
+            description="Display timed comments along SoundCloud tracks, like on SoundCloud."
+            checked={settings.commentsEnabled}
+            onCheckedChange={(commentsEnabled) =>
+              onSettingsChange({ ...settings, commentsEnabled })
+            }
+          />
+          {settings.commentsEnabled && (
+            <IntegrationSwitch
+              title="Pop up comments while playing"
+              description="Briefly show each comment as the playhead reaches it."
+              checked={settings.commentPopupsEnabled}
+              onCheckedChange={(commentPopupsEnabled) =>
+                onSettingsChange({ ...settings, commentPopupsEnabled })
+              }
+            />
+          )}
           {soundcloudCollections.map((collection) => (
             <IntegrationSwitch
               key={collection.id}

@@ -18,6 +18,7 @@ export function TrackRowMenu({
   playlists,
   tags,
   selectedPlaylist,
+  canRemoveFromPlaylist = false,
   selectedTag,
   menuIcon: MenuIcon,
   open,
@@ -26,6 +27,8 @@ export function TrackRowMenu({
   onAddToPlaylist,
   onAddTracksToPlaylist,
   onCreatePlaylist,
+  onCreateSoundCloudPlaylist,
+  onQueueTracks,
   onAddTracksToTag,
   onCreateTag,
   onRemoveFromPlaylist,
@@ -42,6 +45,7 @@ export function TrackRowMenu({
   playlists: LibraryPlaylist[];
   tags: LibraryTag[];
   selectedPlaylist: LibraryPlaylist | null;
+  canRemoveFromPlaylist?: boolean;
   selectedTag: LibraryTag | null;
   menuIcon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
   open: boolean;
@@ -50,6 +54,9 @@ export function TrackRowMenu({
   onAddToPlaylist: (track: LibraryTrack, playlist: LibraryPlaylist) => void;
   onAddTracksToPlaylist?: (tracks: LibraryTrack[], playlist: LibraryPlaylist) => void;
   onCreatePlaylist: (tracks: LibraryTrack[]) => void;
+  onCreateSoundCloudPlaylist?: (tracks: LibraryTrack[]) => void;
+  /** Adds tracks right after the playing one ("next") or at the end of the queue ("later"). */
+  onQueueTracks?: (tracks: LibraryTrack[], position: "next" | "later") => void;
   onAddTracksToTag: (tracks: LibraryTrack[], tag: LibraryTag) => void;
   onCreateTag: (tracks: LibraryTrack[]) => void;
   onRemoveFromPlaylist: (trackIds: string[]) => void;
@@ -81,7 +88,17 @@ export function TrackRowMenu({
   const fileManagerName = getNativeFileManagerName();
   const tracksForAction = selectedTracks && selectedTracks.length > 1 ? selectedTracks : [track];
   const isMultiTrackMenu = tracksForAction.length > 1;
-  const soundCloudOpenIndex = 2 + (selectedPlaylist ? 1 : 0) + (selectedTag ? 1 : 0);
+  // Streamed tracks have no file to reveal or retag.
+  const hasFileActions = fileActionsEnabled && !track.soundcloud;
+  const canRemove = Boolean(selectedPlaylist) || canRemoveFromPlaylist;
+  const showNewSoundCloudPlaylist =
+    Boolean(onCreateSoundCloudPlaylist) && tracksForAction.every((item) => item.soundcloud);
+  // Menu items are tracked by index for hover and keyboard focus, so each needs its own.
+  const queueOffset = onQueueTracks ? 2 : 0;
+  const removeTagIndex = queueOffset + 2 + (canRemove ? 1 : 0);
+  const trailingIndex = removeTagIndex + (selectedTag ? 1 : 0);
+  const newSoundCloudPlaylistIndex = trailingIndex;
+  const soundCloudOpenIndex = trailingIndex + (showNewSoundCloudPlaylist ? 1 : 0);
 
   useEffect(() => {
     if (!open) return;
@@ -136,6 +153,29 @@ export function TrackRowMenu({
             onClick={(event) => event.stopPropagation()}
           >
             <Dropdown className="w-56 bg-[rgba(10,10,10,0.96)]">
+              {onQueueTracks && (
+                <>
+                  <MenuItem
+                    icon={icons["list-start"]}
+                    label="Play Next"
+                    index={0}
+                    onSelect={() => {
+                      onQueueTracks(tracksForAction, "next");
+                      onOpenChange(false, null);
+                    }}
+                  />
+                  <MenuItem
+                    icon={icons["list-end"]}
+                    label="Play Later"
+                    index={1}
+                    onSelect={() => {
+                      onQueueTracks(tracksForAction, "later");
+                      onOpenChange(false, null);
+                    }}
+                  />
+                  <DropdownSeparator />
+                </>
+              )}
               <div
                 className="relative"
                 ref={playlistTriggerRef}
@@ -150,7 +190,7 @@ export function TrackRowMenu({
                 <MenuItem
                   icon={ListPlusIcon}
                   label="Add to Playlist"
-                  index={0}
+                  index={queueOffset}
                   className="pr-8"
                   onSelect={() => setPlaylistOpen((value) => !value)}
                 />
@@ -217,7 +257,7 @@ export function TrackRowMenu({
                 <MenuItem
                   icon={TagIcon}
                   label="Add Tag"
-                  index={1}
+                  index={queueOffset + 1}
                   className="pr-8"
                   onSelect={() => setTagOpen((value) => !value)}
                 />
@@ -268,11 +308,11 @@ export function TrackRowMenu({
                   </div>
                 )}
               </div>
-              {selectedPlaylist && (
+              {canRemove && (
                 <MenuItem
                   icon={icons.x}
                   label="Remove from Playlist"
-                  index={2}
+                  index={queueOffset + 2}
                   onSelect={() => {
                     onRemoveFromPlaylist(tracksForAction.map((item) => item.id));
                     onOpenChange(false, null);
@@ -283,19 +323,30 @@ export function TrackRowMenu({
                 <MenuItem
                   icon={icons.x}
                   label="Remove from Tag"
-                  index={selectedPlaylist ? 3 : 2}
+                  index={removeTagIndex}
                   onSelect={() => {
                     onRemoveFromTag(tracksForAction.map((item) => item.id));
                     onOpenChange(false, null);
                   }}
                 />
               )}
-              {!fileActionsEnabled && track.soundcloud?.permalinkUrl && (
+              {showNewSoundCloudPlaylist && onCreateSoundCloudPlaylist && (
+                <MenuItem
+                  icon={icons.plus}
+                  label="New SoundCloud Playlist…"
+                  index={newSoundCloudPlaylistIndex}
+                  onSelect={() => {
+                    onCreateSoundCloudPlaylist(tracksForAction);
+                    onOpenChange(false, null);
+                  }}
+                />
+              )}
+              {!hasFileActions && !isMultiTrackMenu && track.soundcloud?.permalinkUrl && (
                 <>
                   <DropdownSeparator />
                   <MenuItem
-                    icon={InfoIcon}
-                    label="Open in SoundCloud"
+                    icon={icons.globe}
+                    label="Open on SoundCloud"
                     index={soundCloudOpenIndex}
                     onSelect={() => {
                       window.open(track.soundcloud?.permalinkUrl, "_blank", "noopener,noreferrer");
@@ -304,14 +355,14 @@ export function TrackRowMenu({
                   />
                 </>
               )}
-              {!isMultiTrackMenu && fileActionsEnabled && (
+              {!isMultiTrackMenu && hasFileActions && (
                 <>
                   <DropdownSeparator />
                   {onViewArtist && (
                     <MenuItem
                       icon={UserIcon}
                       label="View Artist"
-                      index={4}
+                      index={trailingIndex}
                       onSelect={() => {
                         onViewArtist(track);
                         onOpenChange(false, null);
@@ -322,7 +373,7 @@ export function TrackRowMenu({
                     <MenuItem
                       icon={AlbumIcon}
                       label="View Album"
-                      index={5}
+                      index={trailingIndex + 1}
                       onSelect={() => {
                         onViewAlbum(track);
                         onOpenChange(false, null);
@@ -333,7 +384,7 @@ export function TrackRowMenu({
                   <MenuItem
                     icon={FinderIcon}
                     label={`Show in ${fileManagerName}`}
-                    index={6}
+                    index={trailingIndex + 2}
                     onSelect={() => {
                       onShowInFolder(track);
                       onOpenChange(false, null);
@@ -342,7 +393,7 @@ export function TrackRowMenu({
                   <MenuItem
                     icon={InfoIcon}
                     label="Metadata"
-                    index={7}
+                    index={trailingIndex + 3}
                     onSelect={() => {
                       onShowMetadata(track);
                       onOpenChange(false, null);

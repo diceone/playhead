@@ -72,6 +72,9 @@ import {
   Users,
   Volume2,
   AudioWaveform,
+  MessageCircle,
+  ListStart,
+  ListEnd,
   X,
   Pencil,
 } from "lucide-react";
@@ -158,6 +161,9 @@ export type IconName =
   | "gauge"
   | "volume-2"
   | "audio-waveform"
+  | "message-circle"
+  | "list-start"
+  | "list-end"
   | "repeat";
 
 export const iconLibraryOrder: IconLibrary[] = ["lucide"];
@@ -238,6 +244,9 @@ const lucideMap: Record<IconName, IconComponent> = {
   gauge: Gauge,
   "volume-2": Volume2,
   "audio-waveform": AudioWaveform,
+  "message-circle": MessageCircle,
+  "list-start": ListStart,
+  "list-end": ListEnd,
   repeat: Repeat,
 };
 
