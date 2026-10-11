@@ -1474,6 +1474,9 @@ export function App() {
         }
       }
     },
+    // renderCuePointRegions is declared below and is stable (`useCallback` with
+    // empty deps); listing it here would throw at render time (TDZ).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       allPlayableTracksById,
       library,
